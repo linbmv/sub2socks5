@@ -41,6 +41,9 @@
 - 支持运行中自动应用新配置
   - 当前实现方式为自动重启 `sing-box`
 
+## 社区链接
+- [LINUX DO](https://linux.do/)
+
 ## 项目结构
 
 - `D:\sub2socks5\src\server.js`
