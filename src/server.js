@@ -72,7 +72,7 @@ const server = http.createServer(async (req, res) => {
         const generated = buildSingBoxConfig(appConfig, subscriptionState);
         await writeGeneratedConfig(generated);
         if (manager.getStatus().running) {
-          await manager.start(resolveManagedPath(appConfig.app.singBoxBinary), generatedConfigPath);
+          await manager.start(await resolveSingBoxBinaryPath(), generatedConfigPath);
           restartFallbackLoop();
         }
         restartFallbackLoop();
@@ -341,7 +341,7 @@ const server = http.createServer(async (req, res) => {
         ensureNodesLoaded();
         const generated = buildSingBoxConfig(appConfig, subscriptionState);
         await writeGeneratedConfig(generated);
-        await manager.start(resolveManagedPath(appConfig.app.singBoxBinary), generatedConfigPath);
+        await manager.start(await resolveSingBoxBinaryPath(), generatedConfigPath);
         restartFallbackLoop();
         return ok(res, manager.getStatus());
       }
@@ -410,7 +410,7 @@ export async function startServer() {
         subscriptionState = await refreshSubscription();
         const generated = buildSingBoxConfig(appConfig, subscriptionState);
         await writeGeneratedConfig(generated);
-        await manager.start(resolveManagedPath(appConfig.app.singBoxBinary), generatedConfigPath);
+        await manager.start(await resolveSingBoxBinaryPath(), generatedConfigPath);
         restartFallbackLoop();
       } catch (error) {
         manager.pushLog(`Auto start failed: ${error.message}`);
@@ -471,6 +471,24 @@ async function initializePresetState() {
     const generated = buildSingBoxConfig(appConfig, subscriptionState);
     await writeGeneratedConfig(generated);
   }
+}
+
+async function resolveSingBoxBinaryPath() {
+  const configured = resolveManagedPath(appConfig?.app?.singBoxBinary || '');
+  if (configured && await pathExists(configured)) {
+    return configured;
+  }
+
+  kernelState = await readInstalledKernelInfo();
+  const installed = kernelState?.binaryPath || '';
+  if (installed && await pathExists(installed)) {
+    appConfig.app.singBoxBinary = path.relative(process.cwd(), installed).replaceAll('\\', '/');
+    await saveConfig(appConfig);
+    manager.pushLog(`sing-box binary fallback to installed path: ${installed}`);
+    return installed;
+  }
+
+  throw new Error(`sing-box binary not found. configured=${configured || '(empty)'}, installed=${installed || '(none)'}`);
 }
 
 async function refreshSubscription() {
