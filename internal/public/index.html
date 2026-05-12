@@ -8,6 +8,7 @@
 </head>
 <body>
   <main class="container">
+    <div id="toast-container" style="position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;display:none;align-items:center;gap:8px;padding:12px 20px;border-radius:10px;background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);font-size:15px;font-weight:500;pointer-events:none"></div>
     <h1>sub2socks5</h1>
     <p>订阅转多端口 socks5 管理面板</p>
 
@@ -67,7 +68,7 @@
 
           <section class="embedded-section">
             <div class="section-heading">
-              <h2>内核状态</h2>
+              <h2>内核状态 <span id="kernel-status-badge" class="editor-status">未下载</span></h2>
               <div class="view-switch">
                 <button id="switch-kernel-form" class="switch-button is-active" type="button">表单模式</button>
                 <button id="switch-kernel-json" class="switch-button" type="button">JSON 模式</button>
@@ -173,8 +174,12 @@
             </div>
             <div id="subscription-urls" class="timeline"></div>
             <div class="section-heading socks-services-heading">
-              <h3>SOCKS5 服务</h3>
-              <button id="add-socks-service" type="button">+ 添加 SOCKS5 服务</button>
+              <h3>SOCKS5 服务 <span id="socks-count" class="editor-status" style="font-size:13px;font-weight:400">0 个服务</span></h3>
+              <div class="section-heading-actions">
+                <button id="export-socks" type="button">导出 SOCKS5 服务信息</button>
+                <button id="copy-socks" type="button">复制 SOCKS5 服务信息</button>
+                <button id="edit-socks-service" type="button">编辑 SOCKS5 服务</button>
+              </div>
             </div>
             <div id="socks-services" class="timeline"></div>
             <p class="form-note">表单模式当前覆盖高频字段；复杂规则、DNS 服务器和多端口高级配置请切换到 JSON 模式。</p>
@@ -185,7 +190,7 @@
           </div>
         </section>
 
-        <div class="info-grid">
+        <div class="info-grid" style="margin-top:24px">
           <section class="embedded-section">
             <div class="section-heading">
               <h2>订阅节点</h2>
@@ -205,38 +210,8 @@
             </div>
           </section>
 
-          <section class="embedded-section">
-            <div class="section-heading">
-              <h2>运行状态</h2>
-              <div class="view-switch">
-                <button id="switch-runtime-form" class="switch-button is-active" type="button">状态</button>
-                <button id="switch-runtime-json" class="switch-button" type="button">日志</button>
-              </div>
-            </div>
-            <div id="runtime-form-view" class="info-view">
-              <div id="runtime-form" class="kv-grid"></div>
-            </div>
-            <div id="runtime-json-view" class="info-view is-hidden">
-              <pre id="runtime"></pre>
-            </div>
-          </section>
         </div>
 
-        <section class="embedded-section">
-          <div class="section-heading">
-            <h2>生成结果</h2>
-            <div class="view-switch">
-              <button id="switch-generated-form" class="switch-button is-active" type="button">表单模式</button>
-              <button id="switch-generated-json" class="switch-button" type="button">JSON 模式</button>
-            </div>
-          </div>
-          <div id="generated-form-view" class="info-view">
-            <div id="generated-form" class="kv-grid"></div>
-          </div>
-          <div id="generated-json-view" class="info-view is-hidden">
-            <pre id="generated"></pre>
-          </div>
-        </section>
       </div>
 
       <div id="tab-logs" class="tab-panel is-hidden">

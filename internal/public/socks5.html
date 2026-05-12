@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SOCKS5 服务 - sub2socks5</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="container">
+    <section>
+      <div class="section-heading">
+        <h1>SOCKS5 服务</h1>
+        <div class="section-heading-actions">
+          <button id="back-home" type="button">返回主页</button>
+          <button id="save-socks" type="button">保存配置</button>
+        </div>
+      </div>
+      <div id="socks-status" class="status-bar is-idle">准备就绪</div>
+    </section>
+
+    <section>
+      <div class="section-heading">
+        <h2>服务列表</h2>
+        <div class="section-heading-actions">
+          <button id="add-socks" type="button">+ 添加 SOCKS5 服务</button>
+        </div>
+      </div>
+      <div id="socks-list" class="timeline"></div>
+    </section>
+  </main>
+  <script type="module" src="/socks5.js"></script>
+</body>
+</html>

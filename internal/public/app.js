@@ -1,6 +1,6 @@
 ﻿const editor = document.getElementById('config-editor');
 const nodesEl = document.getElementById('nodes');
-const runtimeEl = document.getElementById('runtime');
+
 const generatedEl = document.getElementById('generated');
 const kernelEl = document.getElementById('kernel');
 const architectureEl = document.getElementById('architecture');
@@ -18,7 +18,10 @@ const switchJsonButton = document.getElementById('switch-json');
 const tabButtons = [...document.querySelectorAll('.tab-button')];
 const manageNodesButton = document.getElementById('manage-nodes');
 const socksServicesEl = document.getElementById('socks-services');
-const addSocksServiceButton = document.getElementById('add-socks-service');
+const socksCountEl = document.getElementById('socks-count');
+const exportSocksButton = document.getElementById('export-socks');
+const copySocksButton = document.getElementById('copy-socks');
+const editSocksServiceButton = document.getElementById('edit-socks-service');
 const subscriptionUrlsEl = document.getElementById('subscription-urls');
 const addSubscriptionUrlButton = document.getElementById('add-subscription-url');
 const kernelVersionSelect = document.getElementById('kernel-version-select');
@@ -44,8 +47,6 @@ const forms = {
   architecture: document.getElementById('architecture-form'),
   kernel: document.getElementById('kernel-form'),
   subscription: document.getElementById('subscription-form'),
-  runtime: document.getElementById('runtime-form'),
-  generated: document.getElementById('generated-form'),
   logs: document.getElementById('logs-form')
 };
 
@@ -67,8 +68,6 @@ const infoViews = {
   architecture: setupInfoView('architecture'),
   kernel: setupInfoView('kernel'),
   subscription: setupInfoView('subscription'),
-  runtime: setupInfoView('runtime'),
-  generated: setupInfoView('generated'),
   logs: setupInfoView('logs')
 };
 
@@ -136,32 +135,48 @@ async function load() {
 
 function renderOverview() {
   nodesEl.textContent = JSON.stringify(latestData.subscription, null, 2);
-  runtimeEl.textContent = (latestData.runtime?.logs || []).join('\n') || '暂无运行日志';
   kernelEl.textContent = JSON.stringify({
     ...latestData.kernel,
     plannedKernel: latestData.plannedKernel,
     releaseListCount: latestData.releaseList.length
   }, null, 2);
   architectureEl.textContent = JSON.stringify(latestData.architecture, null, 2);
-  generatedEl.textContent = JSON.stringify(latestData.generated, null, 2);
+  if (generatedEl) generatedEl.textContent = JSON.stringify(latestData.generated, null, 2);
   logsEl.textContent = (latestData.logs?.logs || []).join('\n') || '暂无运行日志';
 
-  renderKeyValue(forms.architecture, flattenObject({
-    stored: Boolean(latestData.architecture?.detectedAt),
-    ...latestData.architecture,
+  const arch = latestData.architecture || {};
+  renderKeyValue(forms.architecture, chineseLabels(flattenObject({
+    stored: Boolean(arch.detectedAt),
+    platform: arch.platform || '',
+    arch: arch.arch || '',
+    executableName: arch.executableName || '',
+    assetSuffix: arch.assetSuffix || '',
     plannedVersion: latestData.plannedKernel?.version || ''
-  }));
-  renderKeyValue(forms.kernel, flattenObject({
+  })));
+  const kernelBadge = document.getElementById('kernel-status-badge');
+  if (kernelBadge) {
+    const isRunning = latestData.runtime?.running;
+    const isInstalled = latestData.kernel?.installed;
+    if (isRunning) {
+      kernelBadge.textContent = '运行中';
+      kernelBadge.className = 'editor-status is-saved';
+    } else if (isInstalled) {
+      kernelBadge.textContent = '已下载';
+      kernelBadge.className = 'editor-status is-saved';
+    } else {
+      kernelBadge.textContent = '未下载';
+      kernelBadge.className = 'editor-status is-idle';
+    }
+  }
+  renderKeyValue(forms.kernel, chineseLabels({
     installed: latestData.kernel?.installed,
     binaryPath: latestData.kernel?.binaryPath,
     installedVersion: latestData.kernel?.releaseInfo?.version || latestData.kernel?.releaseInfo?.tag_name || '',
     plannedVersion: latestData.plannedKernel?.version || '',
-    plannedAsset: latestData.plannedKernel?.assetName || '',
-    releaseListCount: latestData.releaseList.length
+    plannedAsset: latestData.plannedKernel?.assetName || ''
   }));
   renderKeyValue(forms.subscription, buildSubscriptionSummary(latestData.subscription));
-  renderKeyValue(forms.runtime, buildRuntimeSummary(latestData.runtime));
-  renderKeyValue(forms.generated, buildGeneratedSummary(latestData.generated));
+  if (forms.generated) renderKeyValue(forms.generated, buildGeneratedSummary(latestData.generated));
   renderLogTimeline(forms.logs, latestData.logs?.logs || []);
   renderArchitectureSelector();
   renderKernelVersionOptions();
@@ -258,44 +273,8 @@ function renderSubscriptionUrls() {
 }
 
 function renderSocksServices() {
-  socksServicesEl.innerHTML = '';
-
-  if (!formPorts.length) {
-    socksServicesEl.innerHTML = '<div class="timeline-item"><div class="title">暂无 SOCKS5 服务</div></div>';
-    return;
-  }
-
-  for (const [index, portItem] of formPorts.entries()) {
-    const item = document.createElement('div');
-    item.className = 'timeline-item';
-    item.innerHTML = `
-      <div class="title">SOCKS5 服务 ${index + 1}</div>
-      <div class="form-grid">
-        <label>
-          <span>tag</span>
-          <input data-port-index="${index}" data-port-field="tag" value="${escapeHtmlAttr(portItem.tag || '')}" />
-        </label>
-        <label>
-          <span>监听地址</span>
-          <input data-port-index="${index}" data-port-field="listen" value="${escapeHtmlAttr(portItem.listen || '127.0.0.1')}" />
-        </label>
-        <label>
-          <span>端口</span>
-          <input data-port-index="${index}" data-port-field="port" type="number" min="1" step="1" value="${escapeHtmlAttr(String(portItem.port || ''))}" />
-        </label>
-        <label>
-          <span>目标出口</span>
-          <select data-port-index="${index}" data-port-field="target">
-            ${buildOutboundOptionsHtml(portItem.target)}
-          </select>
-        </label>
-      </div>
-      <div class="section-heading-actions">
-        ${formPorts.length > 1 ? `<button type="button" data-remove-port="${index}">删除</button>` : ''}
-      </div>
-    `;
-    socksServicesEl.appendChild(item);
-  }
+  const count = formPorts.length;
+  if (socksCountEl) socksCountEl.textContent = `${count} 个服务`;
 }
 
 function buildOutboundOptionsHtml(selectedTag) {
@@ -754,13 +733,39 @@ function buildSubscriptionSummary(subscription) {
   };
 }
 
-function buildRuntimeSummary(runtime) {
-  return {
-    state: runtime?.state || '',
-    running: runtime?.running || false,
-    logCount: (runtime?.logs || []).length,
-    latestLog: runtime?.logs?.slice(-1)[0] || ''
-  };
+const LABEL_MAP = {
+  stored: '已检测',
+  platform: '系统平台',
+  arch: '架构',
+  executableName: '可执行文件名',
+  assetSuffix: '资产后缀',
+  plannedVersion: '计划版本',
+  installed: '已安装',
+  binaryPath: '二进制路径',
+  installedVersion: '已安装版本',
+  plannedAsset: '计划资产'
+};
+
+function chineseLabels(obj) {
+  const result = {};
+  for (const [key, value] of Object.entries(obj)) {
+    result[LABEL_MAP[key] || key] = value;
+  }
+  return result;
+}
+
+const toastEl = document.getElementById('toast-container');
+let toastTimer = null;
+
+function showToast(message, success) {
+  if (!toastEl) return;
+  clearTimeout(toastTimer);
+  toastEl.innerHTML = `${success
+    ? '<span style="color:#10b981;font-size:18px">&#10003;</span>'
+    : '<span style="color:#ef4444;font-size:18px">&#10007;</span>'
+  } ${message}`;
+  toastEl.style.display = 'flex';
+  toastTimer = setTimeout(() => { toastEl.style.display = 'none'; }, 2500);
 }
 
 function buildGeneratedSummary(generated) {
@@ -917,17 +922,36 @@ addSubscriptionUrlButton?.addEventListener('click', () => {
   updateEditorState();
 });
 
-addSocksServiceButton?.addEventListener('click', () => {
-  action('添加 SOCKS5 服务', async () => {
-    formPorts.push(createDefaultPort());
-    const changed = await assignMissingSuggestedPorts();
-    renderSocksServices();
-    if (changed) {
-      updateEditorState();
-    }
-    formTouched = true;
-    updateEditorState();
-  });
+editSocksServiceButton?.addEventListener('click', () => {
+  window.location.href = '/socks5.html';
+});
+
+exportSocksButton?.addEventListener('click', () => {
+  const lines = formPorts
+    .filter(p => p.listen && p.port)
+    .map(p => `socks5://${p.listen}:${p.port}`);
+  const json = JSON.stringify(lines, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'socks5.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+
+copySocksButton?.addEventListener('click', () => {
+  const text = formPorts
+    .filter(p => p.listen && p.port)
+    .map(p => `socks5://${p.listen}:${p.port}`)
+    .join('\n');
+  if (!text) { showToast('没有可复制的服务', false); return; }
+  navigator.clipboard.writeText(text).then(
+    () => showToast('复制成功', true),
+    () => showToast('复制失败', false)
+  );
 });
 document.addEventListener('input', (event) => {
   const target = event.target;
