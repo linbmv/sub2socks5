@@ -196,20 +196,30 @@ func (a *App) handleConfig(w http.ResponseWriter, r *http.Request) {
             "releaseList":       a.releaseList,
             "download":          a.downloadState,
         })
-    case http.MethodPost:
-        var body map[string]any
-        if err := decodeJSON(r.Body, &body); err != nil {
-            fail(w, 400, err.Error())
-            return
-        }
-        a.mu.Lock()
-        a.cfg = body
-        _ = writeJSON(filepath.Join(a.dataDir, "app-config.json"), a.cfg)
-        generated := buildSingBoxConfig(a.cfg, a.subState)
-        _ = writeJSON(filepath.Join(a.runtimeDir, "sing-box.json"), generated)
-        runtimeState := a.runtimeInfo
-        a.mu.Unlock()
-        ok(w, map[string]any{"ok": true, "generated": generated, "runtime": runtimeState})
+	case http.MethodPost:
+		var body map[string]any
+		if err := decodeJSON(r.Body, &body); err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+		a.mu.Lock()
+		a.cfg = body
+		_ = writeJSON(filepath.Join(a.dataDir, "app-config.json"), a.cfg)
+		generated := buildSingBoxConfig(a.cfg, a.subState)
+		_ = writeJSON(filepath.Join(a.runtimeDir, "sing-box.json"), generated)
+		wasRunning := a.proc != nil && a.proc.Process != nil
+		if wasRunning {
+			if err := a.startRuntimeLocked(); err != nil {
+				a.appendRuntimeLog("apply config failed: " + err.Error())
+				a.mu.Unlock()
+				fail(w, 500, err.Error())
+				return
+			}
+			a.appendRuntimeLog("config applied and runtime restarted")
+		}
+		runtimeState := a.runtimeInfo
+		a.mu.Unlock()
+		ok(w, map[string]any{"ok": true, "generated": generated, "runtime": runtimeState})
     default:
         methodNotAllowed(w, "GET, POST")
     }
