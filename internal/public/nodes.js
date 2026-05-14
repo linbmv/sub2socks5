@@ -26,6 +26,7 @@ let nodeDelayState = {};
 const expandedGroups = new Set();
 const expandedChains = new Set();
 const CHECK_BATCH_SIZE = 5;
+const checkingNodeTags = new Set();
 let groupsSectionCollapsed = false;
 let chainsSectionCollapsed = false;
 
@@ -67,7 +68,8 @@ function renderAvailableNodes() {
 
   for (const node of visibleNodes) {
     const delayState = nodeDelayState[node.tag];
-    const delayText = delayState?.loading ? '测速中...' : delayState?.text || 'check';
+    const isChecking = checkingNodeTags.has(node.tag) || delayState?.loading;
+    const delayText = isChecking ? '测速中...' : delayState?.text || 'check';
     const card = document.createElement('div');
     card.className = 'node-pill node-pill-checkable';
     card.innerHTML = `
@@ -78,7 +80,7 @@ function renderAvailableNodes() {
           <span class="node-pill-tag is-source">${escapeHtml(sourceLabel(node.source))}</span>
         </div>
       </div>
-      <button type="button" class="node-check-button ${delayState?.loading ? 'is-loading' : ''}" data-check-node="${escapeHtmlAttr(node.tag)}" title="点击测速">${escapeHtml(delayText)}</button>
+      <button type="button" class="node-check-button ${isChecking ? 'is-loading' : ''}" data-check-node="${escapeHtmlAttr(node.tag)}" title="点击测速" ${isChecking ? 'disabled' : ''}>${escapeHtml(delayText)}</button>
     `;
     availableNodeListEl.appendChild(card);
   }
@@ -288,30 +290,63 @@ function sourceLabel(source) {
 }
 
 async function checkNode(tag) {
+  if (checkingNodeTags.has(tag)) {
+    return;
+  }
+  checkingNodeTags.add(tag);
   nodeDelayState[tag] = { loading: true, text: '测速中...' };
   renderAvailableNodes();
   try {
-    const response = await fetch('/api/nodes/check', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ tags: [tag] })
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data?.error?.message || '测速失败');
+    const configResponse = await fetch('/api/config');
+    const configData = await configResponse.json();
+    if (!configResponse.ok) {
+      throw new Error(configData?.error?.message || '读取运行状态失败');
     }
-    nodeDelayState[tag] = data.results?.[tag]?.ok
-      ? {
-          text: data.results[tag].text,
-          checkedAt: data.results[tag].checkedAt,
-          checkedTag: data.results[tag].checkedTag
+    const runtimeWasRunning = Boolean(configData?.runtime?.running);
+    try {
+      if (!runtimeWasRunning) {
+        const startResponse = await fetch('/api/runtime/start', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}'
+        });
+        const startData = await startResponse.json();
+        if (!startResponse.ok) {
+          throw new Error(startData?.error?.message || '启动 sing-box 失败');
         }
-      : { text: '失败', error: data.results?.[tag]?.error || '测速失败' };
-    setStatus(`节点 ${tag} 测速完成`, 'success');
+        await waitForRuntimeReady();
+      }
+      const response = await fetch('/api/nodes/check', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tags: [tag] })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error?.message || '测速失败');
+      }
+      nodeDelayState[tag] = data.results?.[tag]?.ok
+        ? {
+            text: data.results[tag].text,
+            checkedAt: data.results[tag].checkedAt,
+            checkedTag: data.results[tag].checkedTag
+          }
+        : { text: '失败', error: data.results?.[tag]?.error || '测速失败' };
+      setStatus(`节点 ${tag} 测速完成`, 'success');
+    } finally {
+      if (!runtimeWasRunning) {
+        await fetch('/api/runtime/stop', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}'
+        });
+      }
+    }
   } catch (error) {
     nodeDelayState[tag] = { text: '失败', error: error.message };
     setStatus(error.message, 'error');
   }
+  checkingNodeTags.delete(tag);
   renderAvailableNodes();
 }
 
@@ -322,42 +357,101 @@ async function checkAllNodes() {
     return;
   }
 
-  setStatus('正在分批刷新全部节点测速...', 'loading');
-  for (let index = 0; index < tags.length; index += CHECK_BATCH_SIZE) {
-    const batch = tags.slice(index, index + CHECK_BATCH_SIZE);
-    for (const tag of batch) {
-      nodeDelayState[tag] = { loading: true, text: '测速中...' };
-    }
-    renderAvailableNodes();
+  const configResponse = await fetch('/api/config');
+  const configData = await configResponse.json();
+  if (!configResponse.ok) {
+    throw new Error(configData?.error?.message || '读取运行状态失败');
+  }
+  const runtimeWasRunning = Boolean(configData?.runtime?.running);
 
-    try {
-      const response = await fetch('/api/nodes/check', {
+  setStatus('正在分批刷新全部节点测速...', 'loading');
+  for (const tag of tags) {
+    nodeDelayState[tag] = { loading: true, text: '测速中...' };
+  }
+  renderAvailableNodes();
+
+  let cursor = 0;
+  let hasError = false;
+  try {
+    if (!runtimeWasRunning) {
+      const startResponse = await fetch('/api/runtime/start', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ tags: batch })
+        body: '{}'
       });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.error?.message || '批量测速失败');
+      const startData = await startResponse.json();
+      if (!startResponse.ok) {
+        throw new Error(startData?.error?.message || '启动 sing-box 失败');
       }
-      for (const tag of batch) {
-        const result = data.results?.[tag];
-        nodeDelayState[tag] = result?.ok
-          ? { text: result.text, checkedAt: result.checkedAt, checkedTag: result.checkedTag }
-          : { text: '失败', error: result?.error || '测速失败' };
+      await waitForRuntimeReady();
+    }
+
+    const runOne = async () => {
+      while (true) {
+        const current = cursor;
+        cursor += 1;
+        if (current >= tags.length) {
+          return;
+        }
+        const tag = tags[current];
+        try {
+          const response = await fetch('/api/nodes/check', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ tags: [tag] })
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data?.error?.message || '批量测速失败');
+          }
+          const result = data.results?.[tag];
+          nodeDelayState[tag] = result?.ok
+            ? { text: result.text, checkedAt: result.checkedAt, checkedTag: result.checkedTag }
+            : { text: '失败', error: result?.error || '测速失败' };
+        } catch (error) {
+          nodeDelayState[tag] = { text: '失败', error: error.message };
+          hasError = true;
+        }
+        renderAvailableNodes();
       }
-      renderAvailableNodes();
-    } catch (error) {
-      for (const tag of batch) {
-        nodeDelayState[tag] = { text: '失败', error: error.message };
-      }
-      renderAvailableNodes();
-      setStatus(error.message, 'error');
-      return;
+    };
+
+    const workerCount = Math.min(CHECK_BATCH_SIZE, tags.length);
+    await Promise.all(Array.from({ length: workerCount }, () => runOne()));
+  } finally {
+    if (!runtimeWasRunning) {
+      await fetch('/api/runtime/stop', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}'
+      });
     }
   }
 
+  if (hasError) {
+    setStatus('部分节点测速失败，请重试', 'error');
+    return;
+  }
+
   setStatus('全部节点测速完成', 'success');
+}
+
+async function waitForRuntimeReady(timeoutMs = 8000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const response = await fetch('/api/config');
+    const data = await response.json();
+    if (response.ok && data?.runtime?.running) {
+      await sleep(700);
+      return;
+    }
+    await sleep(250);
+  }
+  throw new Error('sing-box 启动超时，请检查内核日志');
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function setStatus(message, kind = 'idle') {

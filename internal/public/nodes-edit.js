@@ -13,16 +13,20 @@ const FORM_PROTOCOLS = {
   vless: [
     { key: 'uuid', label: 'UUID' },
     { key: 'flow', label: 'Flow' },
-    { key: 'tlsServerName', label: 'SNI' }
+    { key: 'tlsServerName', label: 'SNI' },
+    { key: 'tlsInsecure', label: '允许不安全 TLS', type: 'bool' }
   ],
   vmess: [
     { key: 'uuid', label: 'UUID' },
     { key: 'security', label: 'Security', defaultValue: 'auto' },
-    { key: 'alter_id', label: 'Alter ID', defaultValue: '0' }
+    { key: 'alter_id', label: 'Alter ID', defaultValue: '0' },
+    { key: 'tlsServerName', label: 'SNI' },
+    { key: 'tlsInsecure', label: '允许不安全 TLS', type: 'bool' }
   ],
   trojan: [
     { key: 'password', label: 'Password' },
-    { key: 'tlsServerName', label: 'SNI' }
+    { key: 'tlsServerName', label: 'SNI' },
+    { key: 'tlsInsecure', label: '允许不安全 TLS', type: 'bool' }
   ],
   shadowsocks: [
     { key: 'method', label: 'Method' },
@@ -34,11 +38,21 @@ const FORM_PROTOCOLS = {
   ],
   hysteria2: [
     { key: 'password', label: 'Password' },
-    { key: 'tlsServerName', label: 'SNI' }
+    { key: 'tlsServerName', label: 'SNI' },
+    { key: 'tlsInsecure', label: '允许不安全 TLS', type: 'bool' },
+    { key: 'up_mbps', label: '上行 Mbps' },
+    { key: 'down_mbps', label: '下行 Mbps' },
+    { key: 'obfsType', label: '混淆类型(obfs)' },
+    { key: 'obfsPassword', label: '混淆密码' }
   ],
   tuic: [
     { key: 'uuid', label: 'UUID' },
-    { key: 'password', label: 'Password' }
+    { key: 'password', label: 'Password' },
+    { key: 'tlsServerName', label: 'SNI' },
+    { key: 'tlsInsecure', label: '允许不安全 TLS', type: 'bool' },
+    { key: 'congestion_control', label: '拥塞控制', defaultValue: 'bbr' },
+    { key: 'alpn', label: 'ALPN(逗号分隔)', defaultValue: 'h3' },
+    { key: 'zero_rtt_handshake', label: '0-RTT', type: 'bool' }
   ]
 };
 
@@ -98,7 +112,9 @@ function renderFormFields() {
   formFieldsEl.innerHTML = fields.map((field) => `
     <label>
       <span>${escapeHtml(field.label)}</span>
-      <input data-manual-field="${escapeHtml(field.key)}" value="${escapeHtml(field.defaultValue || '')}" />
+      ${field.type === 'bool'
+        ? `<select data-manual-field="${escapeHtml(field.key)}"><option value="false">否</option><option value="true">是</option></select>`
+        : `<input data-manual-field="${escapeHtml(field.key)}" value="${escapeHtml(field.defaultValue || '')}" />`}
     </label>
   `).join('');
   formPortEl.value = type === 'socks' ? '1080' : (formPortEl.value || '443');
@@ -179,7 +195,8 @@ function buildFormNode() {
 
   for (const fieldEl of formFieldsEl.querySelectorAll('[data-manual-field]')) {
     const key = fieldEl.dataset.manualField;
-    const value = fieldEl.value.trim();
+    const rawValue = fieldEl.value;
+    const value = rawValue.trim();
     if (!value) continue;
     if (key === 'tlsServerName') {
       node.tls = {
@@ -187,6 +204,30 @@ function buildFormNode() {
         server_name: value,
         insecure: false
       };
+      continue;
+    }
+    if (key === 'tlsInsecure') {
+      node.tls = node.tls || { enabled: true, server_name: node.server || '', insecure: false };
+      node.tls.insecure = value === 'true';
+      continue;
+    }
+    if (key === 'obfsType') {
+      node.obfs = node.obfs || {};
+      node.obfs.type = value;
+      continue;
+    }
+    if (key === 'obfsPassword') {
+      node.obfs = node.obfs || {};
+      node.obfs.password = value;
+      continue;
+    }
+    if (key === 'alpn') {
+      node.tls = node.tls || { enabled: true, server_name: node.server || '', insecure: false };
+      node.tls.alpn = value.split(',').map((item) => item.trim()).filter(Boolean);
+      continue;
+    }
+    if (key === 'zero_rtt_handshake') {
+      node.zero_rtt_handshake = value === 'true';
       continue;
     }
     node[key] = key === 'alter_id' ? Number(value) : value;
@@ -247,11 +288,12 @@ document.getElementById('import-edit-manual-nodes').addEventListener('click', as
     if (!response.ok) {
       throw new Error(data?.error?.message || '导入失败');
     }
-    state.manualNodes.push(...(data.nodes || []));
+    const normalized = normalizeImportedNodes(data.nodes || []);
+    state.manualNodes.push(...normalized);
     inputEl.value = '';
-    renderImportResult(data);
+    renderImportResult({ ...data, nodes: normalized });
     renderNodeList();
-    setStatus(`成功导入 ${data.nodes?.length || 0} 个节点`, 'success');
+    setStatus(`成功导入 ${normalized.length || 0} 个节点`, 'success');
   } catch (error) {
     setStatus(error.message, 'error');
   }
@@ -321,4 +363,70 @@ function findDuplicateTag(nodes) {
     seen.add(tag);
   }
   return '';
+}
+
+function normalizeImportedNodes(nodes) {
+  const list = Array.isArray(nodes) ? nodes : [];
+  return list.map((node) => normalizeSingleNode(node)).filter(Boolean);
+}
+
+function normalizeSingleNode(node) {
+  if (!node || typeof node !== 'object') return null;
+
+  const protocol = String(node.type || node.protocol || '').toLowerCase().trim();
+  if (!protocol) return node;
+
+  if (!node.type && node.protocol) {
+    if (protocol === 'hysteria') {
+      return normalizeV2rayHysteriaToHy2(node);
+    }
+    return node;
+  }
+
+  const normalized = { ...node };
+  if (normalized.type === 'ss') normalized.type = 'shadowsocks';
+  if (normalized.type === 'socks5') normalized.type = 'socks';
+  return normalized;
+}
+
+function normalizeV2rayHysteriaToHy2(node) {
+  const settings = node.settings || {};
+  const streamSettings = node.streamSettings || {};
+  const tlsSettings = streamSettings.tlsSettings || {};
+  const hysteriaSettings = streamSettings.hysteriaSettings || {};
+  const finalmask = streamSettings.finalmask || {};
+  const udpMasks = Array.isArray(finalmask.udp) ? finalmask.udp : [];
+  const salamander = udpMasks.find((m) => String(m?.type || '').toLowerCase() === 'salamander');
+  const out = {
+    type: 'hysteria2',
+    tag: String(node.tag || 'hysteria2-node').trim(),
+    server: String(settings.address || '').trim(),
+    server_port: Number(settings.port || 0),
+    password: String(hysteriaSettings.auth || '').trim()
+  };
+
+  out.tls = {
+    enabled: true,
+    server_name: String(tlsSettings.serverName || settings.address || '').trim(),
+    insecure: Boolean(tlsSettings.allowInsecure)
+  };
+
+  const up = parseRateMbps(hysteriaSettings.up);
+  const down = parseRateMbps(hysteriaSettings.down);
+  if (up > 0) out.up_mbps = up;
+  if (down > 0) out.down_mbps = down;
+
+  if (salamander?.settings?.password) {
+    out.obfs = {
+      type: 'salamander',
+      password: String(salamander.settings.password).trim()
+    };
+  }
+  return out;
+}
+
+function parseRateMbps(value) {
+  const text = String(value || '').toLowerCase().trim().replace(/mbps$/i, '').replace(/m$/i, '').trim();
+  const n = Number(text);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
 }

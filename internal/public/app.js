@@ -31,6 +31,11 @@ const kernelArchSelect = document.getElementById('kernel-arch-select');
 const kernelCheckUpdatesButton = document.getElementById('kernel-check-updates');
 const dnsRemoteUrlWrap = document.getElementById('field-dns-remote-url-wrap');
 const dnsBootstrapWrap = document.getElementById('field-dns-bootstrap-wrap');
+const socksConfigOverlay = document.getElementById('socks-config-overlay');
+const socksConfigStep = document.getElementById('socks-config-step');
+const socksConfigProgress = document.getElementById('socks-config-progress');
+const socksConfigDetail = document.getElementById('socks-config-detail');
+const cancelSocksConfigButton = document.getElementById('cancel-socks-config');
 
 const tabPanels = {
   overview: document.getElementById('tab-overview'),
@@ -97,6 +102,7 @@ let isFormInteracting = false;
 let selectedKernelArch = 'windows-amd64';
 let selectedKernelVersion = '';
 let kernelArchManuallySelected = false;
+let socksConfigAbortController = null;
 
 async function load() {
   const [configData, generatedData, logsData, downloadData] = await Promise.all([
@@ -602,19 +608,51 @@ async function assignMissingSuggestedPorts() {
 }
 
 async function autoConfigureSocksServicesFromOutbounds() {
+  socksConfigAbortController = new AbortController();
+  showSocksConfigOverlay('准备阶段', 0, 0, '正在收集可用节点...');
   const outbounds = (latestData.availableOutbounds || [])
     .filter((item) => item && item.tag && !['proxy', 'auto', 'block', 'direct'].includes(item.tag));
   if (!outbounds.length) {
+    hideSocksConfigOverlay();
+    socksConfigAbortController = null;
     throw new Error('当前没有可用节点可用于配置 SOCKS5 服务');
   }
 
+  const runtimeWasRunning = Boolean(latestData.runtime?.running);
+  let connectivity = {};
+  try {
+    if (!runtimeWasRunning) {
+      updateSocksConfigOverlay('启动内核', 0, outbounds.length, '正在启动 sing-box...');
+      await post('/api/runtime/start');
+      await waitForRuntimeReady();
+    }
+    updateSocksConfigOverlay('节点测速', 0, outbounds.length, '正在批量测速节点连通性...');
+    connectivity = await checkOutboundsConnectivity(outbounds.map((item) => item.tag));
+  } catch (error) {
+    hideSocksConfigOverlay();
+    socksConfigAbortController = null;
+    throw new Error(`测速前准备失败：${error.message}`);
+  } finally {
+    if (!runtimeWasRunning) {
+      await post('/api/runtime/stop');
+    }
+  }
+  const passedOutbounds = outbounds.filter((item) => connectivity[item.tag]?.ok);
+  if (!passedOutbounds.length) {
+    hideSocksConfigOverlay();
+    socksConfigAbortController = null;
+    throw new Error('没有测速通过的节点，未创建 SOCKS5 服务');
+  }
+
+  updateSocksConfigOverlay('生成服务', passedOutbounds.length, outbounds.length, '正在为测速通过节点分配端口...');
   const host = '127.0.0.1';
   const used = new Set();
   const appPort = Number(fields.appPort.value || latestData.config?.app?.port || 18080);
   let nextStart = appPort + 1;
   const generated = [];
 
-  for (const item of outbounds) {
+  for (const item of passedOutbounds) {
+    ensureSocksConfigNotCancelled();
     const safeTag = String(item.tag).replace(/[^a-zA-Z0-9_-]/g, '-');
     const port = await resolveNextPort(host, nextStart, [...used]);
     used.add(port);
@@ -632,6 +670,92 @@ async function autoConfigureSocksServicesFromOutbounds() {
   renderSocksServices();
   formTouched = true;
   updateEditorState();
+  updateSocksConfigOverlay('完成', passedOutbounds.length, outbounds.length, `已生成 ${passedOutbounds.length} 个 SOCKS5 服务`);
+  await sleep(350);
+  hideSocksConfigOverlay();
+  socksConfigAbortController = null;
+}
+
+async function checkOutboundsConnectivity(tags) {
+  const results = {};
+  let completed = 0;
+  let cursor = 0;
+  const workerCount = Math.min(5, tags.length);
+  const runOne = async () => {
+    while (true) {
+      ensureSocksConfigNotCancelled();
+      const current = cursor;
+      cursor += 1;
+      if (current >= tags.length) return;
+      const tag = tags[current];
+      updateSocksConfigOverlay('节点测速', completed, tags.length, `正在测试节点：${tag}`);
+      try {
+        const response = await fetch('/api/nodes/check', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ tags: [tag] }),
+          signal: socksConfigAbortController?.signal
+        });
+        const data = await readResponseJson(response);
+        if (!response.ok) {
+          throw new Error(extractErrorMessage(data, response));
+        }
+        results[tag] = data.results?.[tag] || { ok: false, error: '测速失败' };
+      } catch (error) {
+        if (error?.name === 'AbortError') {
+          throw new Error('用户取消了操作');
+        }
+        results[tag] = { ok: false, error: error.message };
+      } finally {
+        completed += 1;
+        updateSocksConfigOverlay('节点测速', completed, tags.length, `已完成 ${completed}/${tags.length}`);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: workerCount }, () => runOne()));
+  return results;
+}
+
+function showSocksConfigOverlay(step, current, total, detail) {
+  if (!socksConfigOverlay) return;
+  updateSocksConfigOverlay(step, current, total, detail);
+  socksConfigOverlay.classList.remove('is-hidden');
+  socksConfigOverlay.setAttribute('aria-hidden', 'false');
+}
+
+function updateSocksConfigOverlay(step, current, total, detail) {
+  if (socksConfigStep) socksConfigStep.textContent = `步骤：${step}`;
+  if (socksConfigProgress) socksConfigProgress.textContent = `${current} / ${total}`;
+  if (socksConfigDetail) socksConfigDetail.textContent = detail || '';
+}
+
+function hideSocksConfigOverlay() {
+  if (!socksConfigOverlay) return;
+  socksConfigOverlay.classList.add('is-hidden');
+  socksConfigOverlay.setAttribute('aria-hidden', 'true');
+}
+
+function ensureSocksConfigNotCancelled() {
+  if (socksConfigAbortController?.signal?.aborted) {
+    throw new Error('用户取消了操作');
+  }
+}
+
+async function waitForRuntimeReady(timeoutMs = 8000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const cfg = await api('/api/config');
+    if (cfg?.runtime?.running) {
+      await sleep(700);
+      return;
+    }
+    await sleep(250);
+  }
+  throw new Error('sing-box 启动超时');
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function createDefaultSubscriptionUrl() {
@@ -1037,19 +1161,32 @@ copySocksButton?.addEventListener('click', () => {
 });
 
 autoConfigureSocksButton?.addEventListener('click', () => action('一键配置 SOCKS5 服务', async () => {
-  await load();
-  await autoConfigureSocksServicesFromOutbounds();
-  const parsed = parseFormConfig(true);
-  if (!parsed.ok) throw new Error(parsed.error);
-  editor.value = parsed.text;
-  await post('/api/config', parsed.value);
-  lastSavedConfigText = parsed.text;
-  formTouched = false;
-  fillForm(parsed.value);
-  renderSubscriptionUrls();
-  renderSocksServices();
-  updateEditorState();
+  try {
+    await load();
+    await autoConfigureSocksServicesFromOutbounds();
+    const parsed = parseFormConfig(true);
+    if (!parsed.ok) throw new Error(parsed.error);
+    editor.value = parsed.text;
+    await post('/api/config', parsed.value);
+    lastSavedConfigText = parsed.text;
+    formTouched = false;
+    fillForm(parsed.value);
+    renderSubscriptionUrls();
+    renderSocksServices();
+    updateEditorState();
+  } finally {
+    hideSocksConfigOverlay();
+    socksConfigAbortController = null;
+  }
 }));
+
+cancelSocksConfigButton?.addEventListener('click', () => {
+  if (!socksConfigAbortController) return;
+  const confirmed = window.confirm('确认取消当前一键配置 SOCKS5 服务任务吗？');
+  if (!confirmed) return;
+  socksConfigAbortController.abort();
+  updateSocksConfigOverlay('取消中', 0, 0, '正在取消任务，请稍候...');
+});
 document.addEventListener('input', (event) => {
   const target = event.target;
   if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return;

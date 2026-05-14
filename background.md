@@ -8,23 +8,23 @@
 
 ### 1.1 后端技术
 
-- `Node.js 24+`
+- `Go 1.23+`
   - 作为项目主运行时
   - 用于提供本地 HTTP 服务、配置管理、订阅拉取、内核管理和进程控制
 
-- Node.js 内置模块
-  - `http`
-    - 提供 Web UI 和 API
-  - `fs/promises`
-    - 读写配置、运行时文件、版本信息、订阅状态
-  - `path`
-    - 管理跨目录路径
-  - `url`
-    - 处理模块路径、URL 解析
-  - `child_process`
-    - 启动 `sing-box`
-  - `buffer`
-    - 处理订阅 Base64、`vmess` / `ss` 等内容解析
+- Go 标准库（当前核心）
+  - `net/http`
+    - 提供 Web UI 与 API
+  - `os` / `path/filepath`
+    - 读写配置、管理跨目录路径
+  - `encoding/json`
+    - 配置、订阅状态和运行数据序列化
+  - `net/url`
+    - 节点 URI 解析
+  - `os/exec`
+    - 启动与管理 `sing-box`
+  - `embed` / `io/fs`
+    - 将静态前端资源打包进二进制
 
 ### 1.2 前端技术
 
@@ -93,11 +93,11 @@
 
 项目当前采用：
 
-**`Node.js 管理层 + sing-box 内核层 + 静态 Web UI 层`**
+**`Go 管理层 + sing-box 内核层 + 静态 Web UI 层`**
 
 ### 3.1 管理层
 
-由 `Node.js` 提供：
+由 `Go` 提供：
 
 - 配置读写
 - 订阅拉取与解析
@@ -133,7 +133,13 @@
 
 ## 4. 当前代码模块映射
 
-### `D:\sub2socks5\src\server.js`
+### `D:\sub2socks5\main.go`
+
+职责：
+- 程序入口
+- 注入 `internal/public` 静态资源并启动服务
+
+### `D:\sub2socks5\internal\app\app.go`
 
 职责：
 - HTTP 服务入口
@@ -147,55 +153,7 @@
 - `/api/kernel/*`
 - `/api/runtime/*`
 
-### `D:\sub2socks5\src\lib\storage.js`
-
-职责：
-- 初始化 `data / runtime / bin`
-- 保存和读取业务配置
-- 持久化订阅状态、架构、版本列表、计划版本
-- 维护默认配置
-
-### `D:\sub2socks5\src\lib\subscription.js`
-
-职责：
-- 拉取机场订阅
-- 自动识别和处理：
-  - 普通链接列表
-  - Base64 订阅
-  - URL Safe Base64
-- 解析常见节点协议
-
-### `D:\sub2socks5\src\lib\singbox-config.js`
-
-职责：
-- 将业务配置转换成 `sing-box` 配置
-- 合并：
-  - 订阅节点
-  - 手动节点
-  - 节点组
-- 生成：
-  - `dns`
-  - `inbounds`
-  - `outbounds`
-  - `route`
-  - `experimental`
-
-### `D:\sub2socks5\src\lib\singbox-manager.js`
-
-职责：
-- 启动 / 停止 `sing-box`
-- 保存运行日志
-- 提供当前运行状态
-
-### `D:\sub2socks5\src\lib\singbox-release.js`
-
-职责：
-- 检测系统平台和架构
-- 从 GitHub Release 获取版本信息
-- 选择匹配资产
-- 下载并安装内核
-
-### `D:\sub2socks5\src\public\app.js`
+### `D:\sub2socks5\internal\public\app.js`
 
 职责：
 - 主页交互逻辑
@@ -207,7 +165,7 @@
 - 架构检测、版本检测、版本更新、计划版本选择、内核下载
 - 日志和状态刷新
 
-### `D:\sub2socks5\src\public\nodes.js`
+### `D:\sub2socks5\internal\public\nodes.js`
 
 职责：
 - 节点管理页逻辑
@@ -682,3 +640,63 @@ go build -trimpath -ldflags "-s -w" -o dist/sub2socks5-windows-x64.exe .
 - 把构建矩阵抽到 `reusable-build.yml` 后，只需维护一份平台配置
 - `build.yml` 与 `release.yml` 已实现职责分离
 - 后续若要增减平台、架构或调整命名规则，只需要优先修改 `D:\sub2socks5\.github\workflows\reusable-build.yml`
+### `D:\sub2socks5\internal\public\nodes-edit.js`
+
+职责：
+- 手动节点表单与原始导入混合编辑
+- 导入后节点归一化与兼容处理
+
+### `D:\sub2socks5\internal\public\socks5.js`
+
+职责：
+- SOCKS5 服务单独编辑页
+- 端口推荐、冲突规避、批量删除与保存
+
+## 17. 现阶段新增成果（本轮）
+
+### 17.1 稳定性与运行控制
+
+- 已实现 sing-box 异常退出自动拉起（退避重启）
+- 手动停止状态与异常退出状态已分离，避免误重启
+- 保存配置/保存节点后若 runtime 运行中会自动重启应用新配置
+
+### 17.2 路由与端口行为修复
+
+- 已修复多 SOCKS5 端口共用同一路由出口问题
+  - 为每个端口生成 `route.rules` 绑定 `inbound -> outbound`
+- 已增强端口分配逻辑
+  - 批量创建服务时通过 `/api/ports/next` + `exclude` 规避冲突
+
+### 17.3 测速链路增强
+
+- 节点全量测速并发模型升级为固定 5 并发滑动窗口
+  - 前置慢节点不会阻塞后续节点调度
+- 单节点测速与全量测速均支持：
+  - 内核未运行时自动拉起
+  - 测速结束恢复初始运行状态
+- 后端测速错误信息已细化
+  - 控制接口未就绪、超时、HTTP 错误可区分
+
+### 17.4 一键配置 SOCKS5 服务
+
+- 已支持“按测速通过结果生成服务”
+  - 仅为连通性测试通过节点创建 SOCKS5 服务
+- 已支持可视化进度遮罩
+  - 步骤状态、节点测试进度、当前细节
+  - 支持用户取消（含二次确认）
+
+### 17.5 协议兼容性补全
+
+- `hysteria2` 解析补全：
+  - 认证字段兼容 `auth/password/token`
+  - 速率字段兼容 `up/down/upmbps/downmbps`
+  - 支持 `obfs/salamander` 相关参数
+- `tuic` 解析修复：
+  - `alpn` 改写为 `tls.alpn`，修复 `unknown field "alpn"` 启动错误
+  - 支持 `zero_rtt_handshake` 参数解析
+
+### 17.6 前端编辑能力完善
+
+- 节点编辑页表单模式补全多协议参数输入项
+- 单行/JSON 导入后新增归一化逻辑
+  - 兼容部分 v2ray 风格 hysteria 节点结构转换

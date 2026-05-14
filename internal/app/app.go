@@ -34,6 +34,8 @@ type App struct {
     subState    map[string]any
     runtimeInfo map[string]any
     proc        *exec.Cmd
+    manualStopRequested bool
+    autoRestartAttempts int
     plannedKernel map[string]any
     releaseList []any
     downloadState map[string]any
@@ -278,6 +280,15 @@ func (a *App) handleNodes(w http.ResponseWriter, r *http.Request) {
         nr["disabledSubscriptionTags"] = getSlice(body, "disabledSubscriptionTags")
         a.cfg["nodeRegistry"] = nr
         _ = writeJSON(filepath.Join(a.dataDir, "app-config.json"), a.cfg)
+        if a.proc != nil && a.proc.Process != nil {
+            if err := a.startRuntimeLocked(); err != nil {
+                a.appendRuntimeLog("apply node config failed: " + err.Error())
+                a.mu.Unlock()
+                fail(w, 500, err.Error())
+                return
+            }
+            a.appendRuntimeLog("node config applied and runtime restarted")
+        }
         outbounds := collectOutbounds(a.cfg, a.subState)
         a.mu.Unlock()
         ok(w, map[string]any{"ok": true, "manualNodes": nr["manualNodes"], "groups": nr["groups"], "chains": nr["chains"], "availableOutbounds": outbounds})
@@ -330,27 +341,13 @@ func (a *App) handleNodesCheck(w http.ResponseWriter, r *http.Request) {
         timeout = 5000
     }
 	results := map[string]any{}
-	nodeReg := getMap(a.cfg, "nodeRegistry")
-	chains := getSlice(nodeReg, "chains")
 	for _, tag := range tags {
-		targetTag := tag
-		for _, c := range chains {
-			cm, ok := c.(map[string]any)
-			if !ok || strings.TrimSpace(mustStr(cm["tag"])) != tag {
-				continue
-			}
-			members := getSlice(cm, "members")
-			if len(members) > 0 {
-				targetTag = strings.TrimSpace(mustStr(members[len(members)-1]))
-			}
-			break
-		}
-		delay, err := measureProxyDelay(targetTag, urlToTest, timeout)
+		delay, err := measureProxyDelay(tag, urlToTest, timeout)
 		if err != nil {
-			results[tag] = map[string]any{"ok": false, "text": "失败", "error": err.Error(), "checkedAt": time.Now().Format(time.RFC3339), "checkedTag": targetTag}
+			results[tag] = map[string]any{"ok": false, "text": "失败", "error": err.Error(), "checkedAt": time.Now().Format(time.RFC3339), "checkedTag": tag}
 			continue
 		}
-		results[tag] = map[string]any{"ok": true, "delay": delay, "text": fmt.Sprintf("%d ms", delay), "checkedAt": time.Now().Format(time.RFC3339), "checkedTag": targetTag}
+		results[tag] = map[string]any{"ok": true, "delay": delay, "text": fmt.Sprintf("%d ms", delay), "checkedAt": time.Now().Format(time.RFC3339), "checkedTag": tag}
 	}
     ok(w, map[string]any{"ok": true, "url": urlToTest, "timeoutMs": timeout, "results": results})
 }
@@ -426,6 +423,8 @@ func (a *App) startRuntimeLocked() error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	a.manualStopRequested = false
+	a.autoRestartAttempts = 0
 	a.proc = cmd
 	a.runtimeInfo["state"] = "running"
 	a.runtimeInfo["running"] = true
@@ -433,17 +432,43 @@ func (a *App) startRuntimeLocked() error {
 	go a.captureLogs(stdout)
 	go a.captureLogs(stderr)
 	go func(c *exec.Cmd) {
-		_ = c.Wait()
+		waitErr := c.Wait()
 		a.mu.Lock()
 		if a.proc == c {
 			a.proc = nil
 			a.runtimeInfo["state"] = "stopped"
 			a.runtimeInfo["running"] = false
-			a.appendRuntimeLog("sing-box exited")
+			if waitErr != nil {
+				a.appendRuntimeLog("sing-box exited with error: " + waitErr.Error())
+			} else {
+				a.appendRuntimeLog("sing-box exited")
+			}
+			if !a.manualStopRequested {
+				a.autoRestartAttempts += 1
+				attempt := a.autoRestartAttempts
+				delay := time.Duration(attempt*2) * time.Second
+				if delay > 30*time.Second {
+					delay = 30 * time.Second
+				}
+				a.appendRuntimeLog(fmt.Sprintf("runtime stopped unexpectedly, auto-restart in %ds (attempt %d)", int(delay/time.Second), attempt))
+				go a.autoRestartAfter(delay)
+			}
 		}
 		a.mu.Unlock()
 	}(cmd)
 	return nil
+}
+
+func (a *App) autoRestartAfter(delay time.Duration) {
+	time.Sleep(delay)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.proc != nil || a.manualStopRequested {
+		return
+	}
+	if err := a.startRuntimeLocked(); err != nil {
+		a.appendRuntimeLog("auto restart failed: " + err.Error())
+	}
 }
 
 func (a *App) handleRuntimeStop(w http.ResponseWriter, r *http.Request) {
@@ -452,6 +477,8 @@ func (a *App) handleRuntimeStop(w http.ResponseWriter, r *http.Request) {
         return
     }
     a.mu.Lock()
+    a.manualStopRequested = true
+    a.autoRestartAttempts = 0
     if a.proc != nil && a.proc.Process != nil {
         _ = a.proc.Process.Kill()
         a.proc = nil
@@ -747,16 +774,29 @@ func resolveManagedPath(rootDir, p string) string {
 }
 
 func measureProxyDelay(tag, testURL string, timeoutMs int) (int, error) {
-    endpoint := fmt.Sprintf("http://127.0.0.1:19090/proxies/%s/delay?url=%s&timeout=%d", url.QueryEscape(tag), url.QueryEscape(testURL), timeoutMs)
-    client := &http.Client{Timeout: time.Duration(timeoutMs+1500) * time.Millisecond}
-    resp, err := client.Get(endpoint)
-    if err != nil {
-        return 0, fmt.Errorf("测速控制接口未就绪，请先确认 sing-box 已正常启动")
-    }
-    defer resp.Body.Close()
-    if resp.StatusCode >= 400 {
-        return 0, fmt.Errorf("HTTP %d", resp.StatusCode)
-    }
+	endpoint := fmt.Sprintf("http://127.0.0.1:19090/proxies/%s/delay?url=%s&timeout=%d", url.QueryEscape(tag), url.QueryEscape(testURL), timeoutMs)
+	client := &http.Client{Timeout: time.Duration(timeoutMs+1500) * time.Millisecond}
+	resp, err := client.Get(endpoint)
+	if err != nil {
+		msg := strings.ToLower(err.Error())
+		switch {
+		case strings.Contains(msg, "connection refused"):
+			return 0, fmt.Errorf("测速控制接口未就绪（connection refused），请先确认 sing-box 已正常启动")
+		case strings.Contains(msg, "timeout"):
+			return 0, fmt.Errorf("测速控制接口请求超时，请稍后重试")
+		default:
+			return 0, fmt.Errorf("测速控制接口未就绪，请先确认 sing-box 已正常启动")
+		}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		text := strings.TrimSpace(string(body))
+		if text != "" {
+			return 0, fmt.Errorf("HTTP %d: %s", resp.StatusCode, text)
+		}
+		return 0, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
     var data map[string]any
     if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
         return 0, err
@@ -1310,28 +1350,41 @@ func parseNodeLine(line string) (map[string]any, error) {
 			}
 		case "hysteria2":
 			node["type"] = "hysteria2"
-			node["password"] = u.User.Username()
+			node["password"] = firstNonEmpty(u.User.Username(), u.Query().Get("auth"), u.Query().Get("password"), u.Query().Get("token"))
 			if tls := buildTLSFromURL(u); tls != nil {
 				node["tls"] = tls
 			}
-			if up := u.Query().Get("upmbps"); strings.TrimSpace(up) != "" {
-				node["up_mbps"] = mustAtoiDefault(up, 0)
+			if up := firstNonEmpty(u.Query().Get("upmbps"), u.Query().Get("up_mbps"), u.Query().Get("up")); strings.TrimSpace(up) != "" {
+				node["up_mbps"] = parseRateMbps(up)
 			}
-			if down := u.Query().Get("downmbps"); strings.TrimSpace(down) != "" {
-				node["down_mbps"] = mustAtoiDefault(down, 0)
+			if down := firstNonEmpty(u.Query().Get("downmbps"), u.Query().Get("down_mbps"), u.Query().Get("down")); strings.TrimSpace(down) != "" {
+				node["down_mbps"] = parseRateMbps(down)
+			}
+			obfsType := firstNonEmpty(u.Query().Get("obfs"), u.Query().Get("obfs-type"), u.Query().Get("obfsType"))
+			obfsPassword := firstNonEmpty(u.Query().Get("obfs-password"), u.Query().Get("obfsPassword"), u.Query().Get("salamander"))
+			if strings.TrimSpace(obfsType) != "" {
+				node["obfs"] = map[string]any{"type": strings.TrimSpace(obfsType), "password": strings.TrimSpace(obfsPassword)}
 			}
 		case "tuic":
 			node["type"] = "tuic"
 			node["uuid"] = u.User.Username()
 			p, _ := u.User.Password()
 			node["password"] = p
-			if tls := buildTLSFromURL(u); tls != nil {
-				node["tls"] = tls
+			tls := buildTLSFromURL(u)
+			if tls == nil {
+				tls = map[string]any{"enabled": true, "server_name": u.Hostname(), "insecure": false}
 			}
+			if alpn := strings.TrimSpace(u.Query().Get("alpn")); alpn != "" {
+				tls["alpn"] = splitCSV(alpn)
+			}
+			node["tls"] = tls
 			if cc := strings.TrimSpace(u.Query().Get("congestion_control")); cc != "" {
 				node["congestion_control"] = cc
 			} else {
 				node["congestion_control"] = "bbr"
+			}
+			if z := strings.TrimSpace(firstNonEmpty(u.Query().Get("zero_rtt_handshake"), u.Query().Get("0rtt"))); z != "" {
+				node["zero_rtt_handshake"] = z == "1" || strings.EqualFold(z, "true") || strings.EqualFold(z, "yes")
 			}
 		default:
 			node["type"] = "socks"
@@ -1478,6 +1531,26 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func splitCSV(v string) []any {
+	parts := strings.Split(v, ",")
+	out := make([]any, 0, len(parts))
+	for _, part := range parts {
+		s := strings.TrimSpace(part)
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func parseRateMbps(v string) int {
+	v = strings.TrimSpace(strings.ToLower(v))
+	v = strings.TrimSuffix(v, "mbps")
+	v = strings.TrimSuffix(v, "m")
+	v = strings.TrimSpace(v)
+	return mustAtoiDefault(v, 0)
 }
 
 func emptyToNil(v string) any {
