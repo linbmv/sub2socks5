@@ -45,6 +45,7 @@ type App struct {
     binDir      string
     publicDir   string
     staticFS    fs.FS
+    autoUpdateLastRun map[string]time.Time
 }
 
 func Run() error {
@@ -69,6 +70,7 @@ func RunWithStaticFS(staticFS fs.FS) error {
         plannedKernel: nil,
         releaseList:   []any{},
         downloadState: map[string]any{"active": false, "steps": []any{}, "progress": nil, "updatedAt": nil},
+        autoUpdateLastRun: map[string]time.Time{},
     }
     must(os.MkdirAll(app.dataDir, 0o755))
     must(os.MkdirAll(app.runtimeDir, 0o755))
@@ -82,6 +84,8 @@ func RunWithStaticFS(staticFS fs.FS) error {
         }
         app.mu.Unlock()
     }
+
+    go app.runSubscriptionAutoUpdateScheduler()
 
     mux := http.NewServeMux()
     mux.HandleFunc("/api/config", app.handleConfig)
@@ -108,6 +112,199 @@ func RunWithStaticFS(staticFS fs.FS) error {
     addr := fmt.Sprintf("%s:%d", host, port)
     fmt.Printf("Web UI listening on http://%s\n", addr)
     return http.ListenAndServe(addr, withCORS(mux))
+}
+
+func (a *App) runSubscriptionAutoUpdateScheduler() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		a.mu.Lock()
+		a.runSubscriptionAutoUpdateLocked(time.Now())
+		a.mu.Unlock()
+	}
+}
+
+func (a *App) runSubscriptionAutoUpdateLocked(now time.Time) {
+	subCfg := getMap(a.cfg, "subscription")
+	auto := getMap(subCfg, "autoUpdate")
+	scope := strings.TrimSpace(mustStr(auto["scope"]))
+	if scope == "" || scope == "off" {
+		return
+	}
+
+	if scope == "simultaneous" {
+		if !shouldRunAutoUpdate(now, a.autoUpdateLastRun["simultaneous"], auto) {
+			return
+		}
+		if err := a.refreshSubscriptionLocked("auto-update(simultaneous)"); err != nil {
+			a.appendRuntimeLog("auto update failed: " + err.Error())
+			return
+		}
+		a.autoUpdateLastRun["simultaneous"] = now
+		a.appendRuntimeLog("auto update completed (simultaneous)")
+		return
+	}
+
+	if scope == "independent" {
+		urls := normalizeSubscriptionURLs(subCfg)
+		items := getSlice(auto, "items")
+		if len(urls) == 0 || len(items) == 0 {
+			return
+		}
+		updated := false
+		for idx := 0; idx < len(urls) && idx < len(items); idx += 1 {
+			item, ok := items[idx].(map[string]any)
+			if !ok {
+				continue
+			}
+			key := fmt.Sprintf("independent:%d", idx)
+			if !shouldRunAutoUpdate(now, a.autoUpdateLastRun[key], item) {
+				continue
+			}
+
+			localSub := cloneMap(subCfg)
+			localSub["url"] = urls[idx]
+			localSub["urls"] = []any{urls[idx]}
+			st := fetchSubscription(localSub)
+			st["updatedAt"] = now.Format(time.RFC3339)
+			a.subState = mergeSubscriptionState(a.subState, st)
+			a.autoUpdateLastRun[key] = now
+			updated = true
+			a.appendRuntimeLog(fmt.Sprintf("auto update completed (independent #%d)", idx+1))
+		}
+		if updated {
+			_ = writeJSON(filepath.Join(a.dataDir, "subscription-state.json"), a.subState)
+		}
+	}
+}
+
+func shouldRunAutoUpdate(now, last time.Time, cfg map[string]any) bool {
+	mode := strings.TrimSpace(mustStr(cfg["mode"]))
+	if mode == "" {
+		mode = "interval"
+	}
+	if mode == "interval" {
+		minutes := int(toFloat(cfg["intervalMinutes"]))
+		if minutes <= 0 {
+			minutes = 60
+		}
+		if last.IsZero() {
+			return true
+		}
+		return now.Sub(last) >= time.Duration(minutes)*time.Minute
+	}
+
+	if mode == "schedule" {
+		timeText := strings.TrimSpace(mustStr(cfg["time"]))
+		if timeText == "" {
+			timeText = "03:00"
+		}
+		parts := strings.Split(timeText, ":")
+		if len(parts) != 2 {
+			return false
+		}
+		hh, err1 := strconv.Atoi(parts[0])
+		mm, err2 := strconv.Atoi(parts[1])
+		if err1 != nil || err2 != nil || hh < 0 || hh > 23 || mm < 0 || mm > 59 {
+			return false
+		}
+		target := time.Date(now.Year(), now.Month(), now.Day(), hh, mm, 0, 0, now.Location())
+		if now.Before(target) {
+			return false
+		}
+
+		dayMode := strings.TrimSpace(mustStr(cfg["dayMode"]))
+		if dayMode == "" {
+			dayMode = "daily"
+		}
+		if last.IsZero() {
+			return true
+		}
+		lastDay := time.Date(last.Year(), last.Month(), last.Day(), 0, 0, 0, 0, last.Location())
+		nowDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		days := int(nowDay.Sub(lastDay).Hours() / 24)
+		switch dayMode {
+		case "daily":
+			return days >= 1
+		case "every3days":
+			return days >= 3
+		case "weekly":
+			return days >= 7
+		default:
+			return days >= 1
+		}
+	}
+
+	return false
+}
+
+func normalizeSubscriptionURLs(sub map[string]any) []string {
+	urls := []string{}
+	for _, v := range getSlice(sub, "urls") {
+		s := strings.TrimSpace(mustStr(v))
+		if s != "" {
+			urls = append(urls, s)
+		}
+	}
+	if len(urls) == 0 {
+		if s := strings.TrimSpace(getString(sub, "url", "")); s != "" {
+			urls = append(urls, s)
+		}
+	}
+	return urls
+}
+
+func mergeSubscriptionState(base, incoming map[string]any) map[string]any {
+	out := map[string]any{"raw": "", "nodes": []any{}, "warnings": []any{}, "updatedAt": nil}
+	if base != nil {
+		out = cloneMap(base)
+	}
+	nodes := map[string]map[string]any{}
+	appendNodes := func(items []any) {
+		for _, n := range items {
+			m, ok := n.(map[string]any)
+			if !ok {
+				continue
+			}
+			tag := strings.TrimSpace(mustStr(m["tag"]))
+			if tag == "" {
+				continue
+			}
+			nodes[tag] = m
+		}
+	}
+	appendNodes(getSlice(out, "nodes"))
+	appendNodes(getSlice(incoming, "nodes"))
+	mergedNodes := make([]any, 0, len(nodes))
+	for _, n := range nodes {
+		mergedNodes = append(mergedNodes, n)
+	}
+	sort.SliceStable(mergedNodes, func(i, j int) bool {
+		mi, _ := mergedNodes[i].(map[string]any)
+		mj, _ := mergedNodes[j].(map[string]any)
+		return mustStr(mi["tag"]) < mustStr(mj["tag"])
+	})
+	out["nodes"] = mergedNodes
+
+	warns := []any{}
+	warns = append(warns, getSlice(out, "warnings")...)
+	warns = append(warns, getSlice(incoming, "warnings")...)
+	out["warnings"] = warns
+	out["updatedAt"] = incoming["updatedAt"]
+	out["raw"] = incoming["raw"]
+	return out
+}
+
+func (a *App) refreshSubscriptionLocked(reason string) error {
+	subCfg := getMap(a.cfg, "subscription")
+	st := fetchSubscription(subCfg)
+	st["updatedAt"] = time.Now().Format(time.RFC3339)
+	a.subState = st
+	if err := writeJSON(filepath.Join(a.dataDir, "subscription-state.json"), st); err != nil {
+		return err
+	}
+	a.appendRuntimeLog("subscription refreshed: " + reason)
+	return nil
 }
 
 func (a *App) loadOrInit() error {
@@ -204,13 +401,14 @@ func (a *App) handleConfig(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, err.Error())
 			return
 		}
+		skipRuntimeRestart := strings.TrimSpace(r.Header.Get("x-skip-runtime-restart")) == "1"
 		a.mu.Lock()
 		a.cfg = body
 		_ = writeJSON(filepath.Join(a.dataDir, "app-config.json"), a.cfg)
 		generated := buildSingBoxConfig(a.cfg, a.subState)
 		_ = writeJSON(filepath.Join(a.runtimeDir, "sing-box.json"), generated)
 		wasRunning := a.proc != nil && a.proc.Process != nil
-		if wasRunning {
+		if wasRunning && !skipRuntimeRestart {
 			if err := a.startRuntimeLocked(); err != nil {
 				a.appendRuntimeLog("apply config failed: " + err.Error())
 				a.mu.Unlock()
@@ -234,12 +432,11 @@ func (a *App) handleSubscriptionRefresh(w http.ResponseWriter, r *http.Request) 
     }
     a.mu.Lock()
     defer a.mu.Unlock()
-    subCfg := getMap(a.cfg, "subscription")
-    st := fetchSubscription(subCfg)
-    st["updatedAt"] = time.Now().Format(time.RFC3339)
-    a.subState = st
-    _ = writeJSON(filepath.Join(a.dataDir, "subscription-state.json"), st)
-    ok(w, st)
+    if err := a.refreshSubscriptionLocked("manual"); err != nil {
+        fail(w, 500, err.Error())
+        return
+    }
+    ok(w, a.subState)
 }
 
 func (a *App) handleNodes(w http.ResponseWriter, r *http.Request) {
@@ -1210,8 +1407,9 @@ func fetchSubscription(sub map[string]any) map[string]any {
     warnings := []any{}
     rawParts := []string{}
     nodes := []map[string]any{}
+    filters := getSlice(sub, "filters")
     client := &http.Client{Timeout: 20 * time.Second}
-    for _, u := range urls {
+    for idx, u := range urls {
         req, _ := http.NewRequest(http.MethodGet, u, nil)
         req.Header.Set("user-agent", getString(sub, "userAgent", "sub2socks5-go/0.1.0"))
         resp, err := client.Do(req)
@@ -1228,14 +1426,51 @@ func fetchSubscription(sub map[string]any) map[string]any {
         txt := string(body)
         rawParts = append(rawParts, "### "+u+"\n"+txt)
         parsed := parseSubscription(txt)
+        filterMode := "off"
+        filterKeywords := []string{}
+        if idx < len(filters) {
+            if fm, ok := filters[idx].(map[string]any); ok {
+                filterMode = strings.TrimSpace(mustStr(fm["mode"]))
+                for _, kw := range getSlice(fm, "keywords") {
+                    s := strings.TrimSpace(mustStr(kw))
+                    if s != "" {
+                        filterKeywords = append(filterKeywords, strings.ToLower(s))
+                    }
+                }
+            }
+        }
         for _, n := range parsed.nodes {
-            nodes = append(nodes, n)
+            if shouldKeepNodeByFilter(n, filterMode, filterKeywords) {
+                nodes = append(nodes, n)
+            }
         }
         for _, w := range parsed.warnings {
             warnings = append(warnings, "["+u+"] "+w)
         }
     }
     return map[string]any{"nodes": dedupeNodes(nodes), "raw": strings.Join(rawParts, "\n\n"), "warnings": warnings}
+}
+
+func shouldKeepNodeByFilter(node map[string]any, mode string, keywords []string) bool {
+    mode = strings.TrimSpace(strings.ToLower(mode))
+    if mode == "" || mode == "off" || len(keywords) == 0 {
+        return true
+    }
+    tag := strings.ToLower(strings.TrimSpace(mustStr(node["tag"])))
+    matched := false
+    for _, kw := range keywords {
+        if kw != "" && strings.Contains(tag, kw) {
+            matched = true
+            break
+        }
+    }
+    if mode == "whitelist" {
+        return matched
+    }
+    if mode == "blacklist" {
+        return !matched
+    }
+    return true
 }
 
 type parseResult struct {

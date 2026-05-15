@@ -179,6 +179,7 @@
               <h3>订阅地址</h3>
               <div class="section-heading-actions">
                 <button id="refresh-sub" type="button">更新订阅</button>
+                <button id="open-sub-auto-update" type="button">自动更新设置</button>
                 <button id="add-subscription-url" type="button">+ 添加订阅地址</button>
               </div>
             </div>
@@ -252,6 +253,105 @@
       <div id="socks-config-detail" class="overlay-detail">正在初始化节点测速...</div>
       <div class="overlay-actions">
         <button id="cancel-socks-config" type="button" class="danger-icon-button">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="sub-url-zoom-overlay" class="overlay is-hidden" aria-hidden="true">
+    <div class="overlay-card">
+      <h3>编辑订阅地址</h3>
+      <textarea id="sub-url-zoom-input" spellcheck="false" style="width:100%;min-height:220px;"></textarea>
+      <div class="overlay-actions" style="margin-top:12px;gap:10px;">
+        <button id="save-sub-url-zoom" type="button">确定</button>
+        <button id="cancel-sub-url-zoom" type="button" class="danger-icon-button">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="sub-auto-update-overlay" class="overlay is-hidden" aria-hidden="true">
+    <div class="overlay-card">
+      <h3>订阅自动更新设置</h3>
+      <div class="form-grid">
+        <label id="sub-auto-scope-wrap">
+          <span>更新范围</span>
+          <select id="sub-auto-scope">
+            <option value="off">关</option>
+            <option value="simultaneous">同时</option>
+            <option value="independent">独立</option>
+          </select>
+        </label>
+        <label id="sub-auto-mode-wrap">
+          <span>更新方式</span>
+          <select id="sub-auto-mode">
+            <option value="interval">间隔更新</option>
+            <option value="schedule">定时更新</option>
+          </select>
+        </label>
+        <label id="sub-auto-interval-wrap">
+          <span>间隔（分钟）</span>
+          <input id="sub-auto-interval" type="number" min="1" step="1" value="60" />
+        </label>
+        <label id="sub-auto-time-wrap" class="is-hidden">
+          <span>定时（HH:mm）</span>
+          <input id="sub-auto-time" type="time" value="03:00" />
+        </label>
+        <label id="sub-auto-day-wrap" class="is-hidden">
+          <span>更新周期</span>
+          <select id="sub-auto-day-mode">
+            <option value="daily">每天</option>
+            <option value="every3days">每三天</option>
+            <option value="weekly">每周</option>
+          </select>
+        </label>
+        <label id="sub-auto-targets-wrap" class="is-hidden" style="grid-column:1 / -1;">
+          <span>定时更新内容（同时模式）</span>
+          <div id="sub-auto-targets" class="timeline"></div>
+        </label>
+      </div>
+      <div class="overlay-actions" style="margin-top:12px;gap:10px;">
+        <button id="save-sub-auto-update" type="button">保存设置</button>
+        <button id="cancel-sub-auto-update" type="button" class="danger-icon-button">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="copy-socks-overlay" class="overlay is-hidden" aria-hidden="true">
+    <div class="overlay-card">
+      <h3>复制 SOCKS5 服务信息</h3>
+      <div class="tab-bar" style="margin-bottom:12px;">
+        <button id="copy-socks-tab-lines" type="button" class="tab-button is-active">每行一个</button>
+        <button id="copy-socks-tab-custom" type="button" class="tab-button">自定义分隔符</button>
+      </div>
+      <div id="copy-socks-lines-panel" class="tab-panel is-active">
+        <textarea id="copy-socks-lines-preview" readonly spellcheck="false" style="width:100%;min-height:160px;"></textarea>
+      </div>
+      <div id="copy-socks-custom-panel" class="tab-panel is-hidden">
+        <label>
+          <span>自定义分隔符</span>
+          <input id="copy-socks-custom-separator" type="text" value="," />
+        </label>
+        <textarea id="copy-socks-custom-preview" readonly spellcheck="false" style="width:100%;min-height:160px;margin-top:10px;"></textarea>
+      </div>
+      <div class="overlay-actions" style="margin-top:12px;gap:10px;">
+        <button id="copy-socks-confirm" type="button">复制</button>
+        <button id="copy-socks-cancel" type="button" class="danger-icon-button">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="sub-filter-overlay" class="overlay is-hidden" aria-hidden="true">
+    <div class="overlay-card">
+      <h3>订阅节点过滤</h3>
+      <div class="tab-bar" style="margin-bottom:12px;">
+        <button id="sub-filter-tab-off" type="button" class="tab-button is-active">关</button>
+        <button id="sub-filter-tab-black" type="button" class="tab-button">黑名单</button>
+        <button id="sub-filter-tab-white" type="button" class="tab-button">白名单</button>
+      </div>
+      <div id="sub-filter-inputs" class="timeline"></div>
+      <div class="overlay-actions" style="margin-top:12px;gap:10px;">
+        <button id="sub-filter-add" type="button">+ 添加关键词</button>
+        <button id="sub-filter-save" type="button">保存</button>
+        <button id="sub-filter-cancel" type="button" class="danger-icon-button">取消</button>
       </div>
     </div>
   </div>

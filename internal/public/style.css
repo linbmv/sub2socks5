@@ -53,6 +53,7 @@ section:hover {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
+  flex-wrap: wrap;
 }
 .section-heading h2,
 .section-heading h3 {
@@ -367,6 +368,69 @@ button:disabled {
   background: var(--inner-card-bg);
   box-shadow: 0 1px 2px rgba(0,0,0,0.04);
 }
+
+.sub-url-label {
+  grid-column: 1 / -1;
+}
+
+.sub-url-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sub-url-row.has-side-action {
+  align-items: center;
+}
+
+.sub-url-input-wrap {
+  position: relative;
+  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sub-url-input-wrap.is-expanded {
+  width: 100%;
+  flex: 1 1 auto;
+}
+
+.sub-url-input {
+  width: 100%;
+  max-width: none;
+  padding-right: 40px;
+}
+
+.sub-url-input.is-expanded {
+  width: 100%;
+  max-width: none;
+}
+
+.sub-url-zoom {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 26px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #e5e7eb;
+  color: #4b5563;
+}
+
+.sub-url-zoom:hover {
+  background: #d1d5db;
+}
+
+.sub-url-row > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .member-row select {
   flex: 1 1 auto;
 }
@@ -438,6 +502,11 @@ button:disabled {
   border-radius: 999px;
   background: #e5e7eb;
   color: var(--text-main);
+}
+.node-check-button:hover,
+.icon-button:hover,
+.sub-url-zoom:hover {
+  cursor: not-allowed;
 }
 .node-check-button.is-loading {
   opacity: 0.8;
@@ -533,10 +602,15 @@ button:disabled {
   align-items: center;
   justify-content: center;
   z-index: 10000;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 180ms ease, visibility 180ms ease;
 }
 
 .overlay.is-hidden {
-  display: none;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .overlay-card {
@@ -546,6 +620,14 @@ button:disabled {
   background: var(--inner-card-bg);
   padding: 20px;
   box-shadow: 0 20px 50px rgba(63, 43, 16, 0.24);
+  transform: translateY(0) scale(1);
+  opacity: 1;
+  transition: transform 180ms ease, opacity 180ms ease;
+}
+
+.overlay.is-hidden .overlay-card {
+  transform: translateY(10px) scale(0.98);
+  opacity: 0;
 }
 
 .overlay-card h3 {
@@ -589,6 +671,12 @@ button:disabled {
   background: #2d4cd6;
 }
 
+#socks-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 @media (max-width: 900px) {
   .form-grid-basic {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -611,9 +699,126 @@ button:disabled {
   .split-layout {
     grid-template-columns: 1fr;
   }
+
+  #socks-list {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 640px) {
+  .container {
+    padding: 14px;
+  }
+
+  .section-heading-actions {
+    width: 100%;
+  }
+
+  .section-heading-actions button {
+    width: 100%;
+  }
+
+  .kernel-pickers,
+  .kernel-pickers select,
+  .actions select {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .tab-bar,
+  .view-switch {
+    width: 100%;
+    display: flex;
+  }
+
+  .tab-button,
+  .switch-button {
+    flex: 1 1 0;
+  }
+
+  .node-edit-card {
+    align-items: stretch;
+  }
+
+  .node-edit-card > button {
+    min-width: 52px;
+  }
+
+  .overlay-card {
+    width: calc(100vw - 20px);
+    padding: 16px;
+  }
+
+  .section-heading h1,
+  .section-heading h2,
+  .section-heading h3 {
+    width: 100%;
+  }
+
+  .actions,
+  .actions-top,
+  .actions-inline,
+  .actions-runtime {
+    width: 100%;
+  }
+
+  .actions button,
+  .actions-top button,
+  .actions-inline button,
+  .actions-runtime button {
+    width: 100%;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .member-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .member-row button,
+  .member-add,
+  .member-remove {
+    width: 100%;
+  }
+
+  .node-pill-checkable {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .node-check-button {
+    width: 100%;
+  }
+
+  .timeline-item {
+    padding: 10px;
+  }
+
+  .sub-url-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .sub-url-input-wrap,
+  .sub-url-input-wrap.is-expanded {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+
+  .sub-url-input,
+  .sub-url-input.is-expanded {
+    flex: 1 1 auto;
+    max-width: none;
+  }
+
+  .sub-url-row button {
+    width: 100%;
+  }
+
   .form-grid-basic {
     grid-template-columns: 1fr;
   }
