@@ -751,6 +751,39 @@ async function autoConfigureSocksServicesFromOutbounds() {
     throw new Error('没有测速通过的节点，未创建 SOCKS5 服务');
   }
 
+  updateSocksConfigOverlay('出口识别', 0, passedOutbounds.length, '正在识别节点出口 IP...');
+  const egressResults = await checkOutboundsEgressIP(passedOutbounds.map((item) => item.tag));
+  const ipBuckets = new Map();
+  for (const item of passedOutbounds) {
+    const ip = egressResults[item.tag]?.egressIP;
+    if (!ip) continue;
+    if (!ipBuckets.has(ip)) ipBuckets.set(ip, []);
+    ipBuckets.get(ip).push(item.tag);
+  }
+
+  const existingGroups = Array.isArray(latestData?.config?.nodeRegistry?.groups)
+    ? latestData.config.nodeRegistry.groups.slice()
+    : [];
+  const generatedGroups = [];
+  const groupedNodeTags = new Set();
+  for (const [ip, members] of ipBuckets.entries()) {
+    if (members.length < 2) continue;
+    const countryCode = extractCountryCodeFromTag(members[0]);
+    const tag = `${countryCode}-${ip}`;
+    generatedGroups.push({
+      tag,
+      strategy: 'urltest',
+      url: 'https://www.gstatic.com/generate_204',
+      interval: '10m',
+      timeoutMs: 5000,
+      members: [...new Set(members)]
+    });
+    members.forEach((nodeTag) => groupedNodeTags.add(nodeTag));
+  }
+  const mergedGroups = mergeGeneratedGroups(existingGroups, generatedGroups);
+  latestData.config.nodeRegistry ||= {};
+  latestData.config.nodeRegistry.groups = mergedGroups;
+
   updateSocksConfigOverlay('生成服务', passedOutbounds.length, outbounds.length, '正在为测速通过节点分配端口...');
   const host = '127.0.0.1';
   const used = new Set();
@@ -758,9 +791,14 @@ async function autoConfigureSocksServicesFromOutbounds() {
   let nextStart = appPort + 1;
   const generated = [];
 
-  for (const item of passedOutbounds) {
+  const targetsForServices = [
+    ...generatedGroups.map((group) => ({ tag: group.tag, isGroup: true })),
+    ...passedOutbounds.filter((item) => !groupedNodeTags.has(item.tag)).map((item) => ({ tag: item.tag, isGroup: false }))
+  ];
+
+  for (const item of targetsForServices) {
     ensureSocksConfigNotCancelled();
-    const safeTag = String(item.tag).replace(/[^a-zA-Z0-9_-]/g, '-');
+    const safeTag = String(item.tag).replace(/[^a-zA-Z0-9_.-]/g, '-');
     const port = await resolveNextPort(host, nextStart, [...used]);
     used.add(port);
     nextStart = port + 1;
@@ -774,10 +812,19 @@ async function autoConfigureSocksServicesFromOutbounds() {
   }
 
   formPorts = generated;
+  if (currentView === 'json') {
+    const parsed = parseJsonEditor();
+    if (parsed.ok) {
+      const next = parsed.value;
+      next.nodeRegistry ||= {};
+      next.nodeRegistry.groups = mergedGroups;
+      editor.value = JSON.stringify(next, null, 2);
+    }
+  }
   renderSocksServices();
   formTouched = true;
   updateEditorState();
-  updateSocksConfigOverlay('完成', passedOutbounds.length, outbounds.length, `已生成 ${passedOutbounds.length} 个 SOCKS5 服务`);
+  updateSocksConfigOverlay('完成', targetsForServices.length, outbounds.length, `已生成 ${targetsForServices.length} 个 SOCKS5 服务，自动创建 ${generatedGroups.length} 个同出口节点组`);
   await sleep(350);
   hideSocksConfigOverlay();
   socksConfigAbortController = null;
@@ -821,6 +868,48 @@ async function checkOutboundsConnectivity(tags) {
   };
   await Promise.all(Array.from({ length: workerCount }, () => runOne()));
   return results;
+}
+
+async function checkOutboundsEgressIP(tags) {
+  const response = await fetch('/api/nodes/egress', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tags, timeoutMs: 6000 }),
+    signal: socksConfigAbortController?.signal
+  });
+  const data = await readResponseJson(response);
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(data, response));
+  }
+  return data.results || {};
+}
+
+function extractCountryCodeFromTag(tag) {
+  const text = String(tag || '').toUpperCase();
+  const match = text.match(/([A-Z]{2})/);
+  return match?.[1] || 'UN';
+}
+
+function mergeGeneratedGroups(existingGroups, generatedGroups) {
+  const output = [];
+  const existingByTag = new Map();
+  for (const group of existingGroups || []) {
+    if (group?.tag) existingByTag.set(group.tag, group);
+    output.push(group);
+  }
+  for (const group of generatedGroups || []) {
+    const previous = existingByTag.get(group.tag);
+    if (previous) {
+      previous.strategy = 'urltest';
+      previous.url = group.url;
+      previous.interval = group.interval;
+      previous.timeoutMs = group.timeoutMs;
+      previous.members = group.members;
+    } else {
+      output.push(group);
+    }
+  }
+  return output;
 }
 
 function showSocksConfigOverlay(step, current, total, detail) {
