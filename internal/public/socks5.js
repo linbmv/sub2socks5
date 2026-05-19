@@ -177,23 +177,46 @@ document.getElementById('save-socks').addEventListener('click', async () => {
       if (!portItem.target) throw new Error(`SOCKS5 服务 ${portItem.tag} 目标出口不能为空`);
     }
 
-    fullConfig.ports = formPorts.map((item, index) => ({
-      tag: item.tag?.trim() || `socks-${index + 1}`,
-      listen: item.listen?.trim() || '127.0.0.1',
+    // diff 当前表单 vs 已保存快照，按 services CRUD 增量同步（避免全量替换 + 不必要的 sing-box 重启）
+    const desired = formPorts.map((item, index) => ({
+      tag: (item.tag || '').trim() || `socks-${index + 1}`,
+      listen: (item.listen || '').trim() || '127.0.0.1',
       port: Number(item.port || 0),
       target: item.target || fullConfig?.routing?.routeFinal || 'proxy',
       sniff: true
     }));
+    const before = new Map(savedPortsSnapshot.map((p) => [p.tag, p]));
+    const after = new Map(desired.map((p) => [p.tag, p]));
 
-    const response = await fetch('/api/config', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(fullConfig)
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data?.error?.message || '保存失败');
+    // 1. 删除（before 有 after 没）
+    for (const tag of before.keys()) {
+      if (!after.has(tag)) {
+        const r = await fetch(`/api/services/${encodeURIComponent(tag)}`, { method: 'DELETE' });
+        if (!r.ok && r.status !== 404) throw new Error(`删除 ${tag} 失败：${r.status}`);
+      }
     }
+    // 2. 新增（after 有 before 没） + 更新（两者都有但内容变了）
+    for (const [tag, svc] of after.entries()) {
+      const prev = before.get(tag);
+      if (!prev) {
+        const r = await fetch('/api/services', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(svc)
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d?.error?.message || `新增 ${tag} 失败`);
+      } else if (JSON.stringify(prev) !== JSON.stringify(svc)) {
+        const r = await fetch(`/api/services/${encodeURIComponent(tag)}`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(svc)
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d?.error?.message || `更新 ${tag} 失败`);
+      }
+    }
+    fullConfig.ports = desired;
     savedPortsSnapshot = JSON.parse(JSON.stringify(formPorts));
     render();
     setStatus('SOCKS5 服务已保存', 'success');
