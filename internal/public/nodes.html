@@ -7,55 +7,77 @@
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <main class="container">
-    <section>
-      <div class="section-heading">
-        <h1>节点管理</h1>
-        <div class="section-heading-actions">
-          <button id="back-home" type="button">返回主页</button>
-          <button id="save-nodes" type="button">保存节点配置</button>
-        </div>
-      </div>
-      <div id="node-status" class="status-bar is-idle">准备就绪</div>
-    </section>
+  <div class="layout-shell">
+    <aside class="sidebar">
+      <div class="sidebar-logo">sub2socks5</div>
+      <nav class="sidebar-nav">
+        <a href="/#home" class="nav-item">首页</a>
+        <a href="/nodes.html" class="nav-item is-active">节点管理</a>
+        <a href="/#dns" class="nav-item">基础与 DNS</a>
+        <a href="/#kernel" class="nav-item">内核管理</a>
+        <a href="/#scheduler" class="nav-item">订阅调度</a>
+        <a href="/#logs" class="nav-item">实时日志</a>
+        <a href="/#json" class="nav-item">JSON 模式</a>
+        <a href="/#about" class="nav-item">关于</a>
+      </nav>
+    </aside>
 
-    <section>
-      <div class="section-heading">
-        <h2>节点组</h2>
-        <div class="section-heading-actions">
-          <button id="toggle-groups-section" type="button">收起</button>
-          <button id="add-group" type="button">添加节点组</button>
-        </div>
-      </div>
-      <div id="groups-section-body">
-        <div id="groups" class="timeline"></div>
-      </div>
-    </section>
+    <main class="content">
+      <header class="content-header">
+        <h1 id="page-title">节点管理</h1>
+      </header>
 
-    <section>
-      <div class="section-heading">
-        <h2>链式代理</h2>
-        <div class="section-heading-actions">
-          <button id="toggle-chains-section" type="button">收起</button>
-          <button id="add-chain" type="button">添加链式代理</button>
-        </div>
-      </div>
-      <div id="chains-section-body">
-        <div id="chains" class="timeline"></div>
-      </div>
-    </section>
+      <div class="content-body">
+        <section>
+          <div class="section-heading">
+            <h2>操作</h2>
+            <div class="section-heading-actions">
+              <button id="back-home" type="button">返回主页</button>
+              <button id="save-nodes" type="button">保存节点配置</button>
+            </div>
+          </div>
+          <div id="node-status" class="status-bar is-idle">准备就绪</div>
+        </section>
 
-    <section>
-      <div class="section-heading">
-        <h2>现有节点</h2>
-        <div class="section-heading-actions">
-          <button id="check-all-nodes" type="button" class="icon-button" title="刷新所有节点测速">↻</button>
-          <button id="open-node-editor" type="button">编辑</button>
-        </div>
+        <section>
+          <div class="section-heading">
+            <h2>节点组</h2>
+            <div class="section-heading-actions">
+              <button id="toggle-groups-section" type="button">收起</button>
+              <button id="add-group" type="button">添加节点组</button>
+            </div>
+          </div>
+          <div id="groups-section-body">
+            <div id="groups" class="timeline"></div>
+          </div>
+        </section>
+
+        <section>
+          <div class="section-heading">
+            <h2>链式代理</h2>
+            <div class="section-heading-actions">
+              <button id="toggle-chains-section" type="button">收起</button>
+              <button id="add-chain" type="button">添加链式代理</button>
+            </div>
+          </div>
+          <div id="chains-section-body">
+            <div id="chains" class="timeline"></div>
+          </div>
+        </section>
+
+        <section>
+          <div class="section-heading">
+            <h2>现有节点</h2>
+            <div class="section-heading-actions">
+              <button id="check-all-nodes" type="button" class="icon-button" title="刷新所有节点测速">↻</button>
+              <button id="open-node-editor" type="button">编辑</button>
+            </div>
+          </div>
+          <div id="available-node-list" class="node-pill-grid"></div>
+        </section>
       </div>
-      <div id="available-node-list" class="node-pill-grid"></div>
-    </section>
-  </main>
+    </main>
+  </div>
 
   <div id="bulk-add-overlay" class="overlay is-hidden" aria-hidden="true">
     <div class="overlay-card">
