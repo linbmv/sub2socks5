@@ -1242,6 +1242,7 @@ function switchTab(tabName) {
     button.classList.toggle('is-active', button.dataset.tab === tabName);
   }
   for (const [name, panel] of Object.entries(tabPanels)) {
+    if (!panel) continue;
     panel.classList.toggle('is-active', name === tabName);
     panel.classList.toggle('is-hidden', name !== tabName);
   }
@@ -2035,13 +2036,39 @@ window.addEventListener('storage', (event) => {
 
 load()
   .then(() => {
-    switchView('form');
-    switchTab('overview');
+    showSection(window.location.hash);
     if (!syncStatusBarWithDownload(latestData.download)) {
       setStatus('准备就绪', 'idle');
     }
   })
   .catch((error) => setStatus(`初始化失败：${error.message}`, 'error'));
+
+function showSection(hash) {
+  const sectionId = (hash || '').replace(/^#/, '') || 'home';
+  document.querySelectorAll('.nav-item[data-nav]').forEach((el) => {
+    el.classList.toggle('is-active', el.dataset.nav === sectionId);
+  });
+  let resolvedSection = null;
+  document.querySelectorAll('.section[data-section]').forEach((el) => {
+    const matched = el.dataset.section === sectionId;
+    el.classList.toggle('is-active', matched);
+    if (matched) resolvedSection = el;
+  });
+  if (!resolvedSection) {
+    const fallback = document.querySelector('.section[data-section="home"]');
+    if (fallback) fallback.classList.add('is-active');
+  }
+  const pageTitle = document.getElementById('page-title');
+  const activeNav = document.querySelector(`.nav-item[data-nav="${sectionId}"]`);
+  if (pageTitle && activeNav) pageTitle.textContent = activeNav.textContent.trim();
+  if (sectionId === 'json') switchView('json');
+  else if (sectionId === 'dns') switchView('form');
+}
+window.addEventListener('hashchange', () => showSection(window.location.hash));
+
+document.getElementById('save-json-config')?.addEventListener('click', () => {
+  document.getElementById('save-config')?.click();
+});
 
 setInterval(() => {
   if (currentView === 'form' && (formTouched || isFormInteracting)) {

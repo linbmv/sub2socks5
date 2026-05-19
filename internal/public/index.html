@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
@@ -7,244 +7,299 @@
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <main class="container">
-    <div id="toast-container" style="position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;display:none;align-items:center;gap:8px;padding:12px 20px;border-radius:10px;background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);font-size:15px;font-weight:500;pointer-events:none"></div>
-    <h1>sub2socks5</h1>
-    <p>订阅转多端口 socks5 管理面板</p>
-    <div id="deployment-banner" class="deployment-banner is-hidden" role="status" aria-live="polite"></div>
+  <div id="toast-container" style="position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;display:none;align-items:center;gap:8px;padding:12px 20px;border-radius:10px;background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);font-size:15px;font-weight:500;pointer-events:none"></div>
 
-    <section>
-      <div id="status-bar" class="status-bar is-idle">准备就绪</div>
-      <div class="actions actions-top">
-        <button id="kernel-architecture-detect">检测当前架构</button>
-        <button id="kernel-check">检查内核版本</button>
-        <button id="kernel-check-updates">检查版本更新</button>
-      </div>
-      <div class="kernel-control-row">
-        <div class="kernel-pickers">
-          <select id="kernel-arch-select">
-            <option value="windows-amd64">windows-amd64</option>
-            <option value="windows-arm64">windows-arm64</option>
-            <option value="linux-amd64">linux-amd64</option>
-            <option value="linux-arm64">linux-arm64</option>
-            <option value="darwin-amd64">darwin-amd64</option>
-            <option value="darwin-arm64">darwin-arm64</option>
-          </select>
-          <select id="kernel-version-select"></select>
-        </div>
-        <div class="actions actions-inline">
-          <button id="kernel-select-version">设为计划版本</button>
-          <button id="kernel-download">拉取 sing-box 内核</button>
-        </div>
-      </div>
-      <div class="actions actions-runtime">
-        <button id="start">启动 sing-box</button>
-        <button id="stop">停止 sing-box</button>
-      </div>
-    </section>
+  <div class="layout-shell">
+    <aside class="sidebar">
+      <div class="sidebar-logo">sub2socks5</div>
+      <nav class="sidebar-nav">
+        <a href="#home" class="nav-item is-active" data-nav="home">首页</a>
+        <a href="/nodes.html" class="nav-item">节点管理</a>
+        <a href="#dns" class="nav-item" data-nav="dns">基础与 DNS</a>
+        <a href="#kernel" class="nav-item" data-nav="kernel">内核管理</a>
+        <a href="#scheduler" class="nav-item" data-nav="scheduler">订阅调度</a>
+        <a href="#logs" class="nav-item" data-nav="logs">实时日志</a>
+        <a href="#json" class="nav-item" data-nav="json">JSON 模式</a>
+        <a href="#about" class="nav-item" data-nav="about">关于</a>
+      </nav>
+    </aside>
 
-    <section>
-      <div class="tab-bar">
-        <button class="tab-button is-active" data-tab="overview" type="button">概览</button>
-        <button class="tab-button" data-tab="logs" type="button">实时日志</button>
-      </div>
+    <main class="content">
+      <header class="content-header">
+        <h1 id="page-title">首页</h1>
+        <div id="deployment-banner" class="deployment-banner is-hidden" role="status" aria-live="polite"></div>
+      </header>
 
-      <div id="tab-overview" class="tab-panel is-active">
-        <div class="info-grid">
+      <div class="content-body">
+
+        <section data-section="home" class="section is-active">
           <section class="embedded-section">
             <div class="section-heading">
-              <h2>架构信息</h2>
-              <div class="view-switch">
-                <button id="switch-architecture-form" class="switch-button is-active" type="button">表单模式</button>
-                <button id="switch-architecture-json" class="switch-button" type="button">JSON 模式</button>
+              <h2>运行状态</h2>
+              <div class="section-heading-actions">
+                <button id="start" type="button">启动 sing-box</button>
+                <button id="stop" type="button">停止 sing-box</button>
               </div>
             </div>
-            <div id="architecture-form-view" class="info-view">
-              <div id="architecture-form" class="kv-grid"></div>
-            </div>
-            <div id="architecture-json-view" class="info-view is-hidden">
-              <pre id="architecture"></pre>
-            </div>
+            <div id="status-bar" class="status-bar is-idle">准备就绪</div>
           </section>
 
           <section class="embedded-section">
-            <div class="section-heading">
-              <h2>内核状态 <span id="kernel-status-badge" class="editor-status">未下载</span></h2>
-              <div class="view-switch">
-                <button id="switch-kernel-form" class="switch-button is-active" type="button">表单模式</button>
-                <button id="switch-kernel-json" class="switch-button" type="button">JSON 模式</button>
-              </div>
-            </div>
-            <div id="kernel-form-view" class="info-view">
-              <div id="kernel-form" class="kv-grid"></div>
-            </div>
-            <div id="kernel-json-view" class="info-view is-hidden">
-              <pre id="kernel"></pre>
-            </div>
-          </section>
-        </div>
-
-        <section class="embedded-section">
-          <div class="section-heading">
-            <h2>基础配置</h2>
-            <div class="section-heading-actions">
-              <button id="save-config" type="button">保存配置</button>
-              <div id="editor-status" class="editor-status is-saved">配置已保存</div>
-              <div class="view-switch">
-                <button id="switch-form" class="switch-button is-active" type="button">表单模式</button>
-                <button id="switch-json" class="switch-button" type="button">JSON 模式</button>
-              </div>
-            </div>
-          </div>
-
-          <div id="form-view" class="config-view">
-            <div class="form-grid form-grid-basic">
-              <label>
-                <span>Web UI 监听地址</span>
-                <input id="field-app-host" type="text" />
-              </label>
-              <label>
-                <span>Web UI 端口</span>
-                <input id="field-app-port" type="number" min="1" step="1" />
-              </label>
-              <label>
-                <span>sing-box 二进制路径</span>
-                <input id="field-app-binary" type="text" />
-              </label>
-              <label>
-                <span>日志级别</span>
-                <select id="field-app-log-level">
-                  <option value="trace">trace</option>
-                  <option value="debug">debug</option>
-                  <option value="info">info</option>
-                  <option value="warn">warn</option>
-                  <option value="error">error</option>
-                  <option value="fatal">fatal</option>
-                  <option value="panic">panic</option>
-                </select>
-              </label>
-              <label class="form-row-2">
-                <span>DNS 策略</span>
-                <select id="field-dns-strategy">
-                  <option value="prefer_ipv4">prefer_ipv4</option>
-                  <option value="prefer_ipv6">prefer_ipv6</option>
-                  <option value="ipv4_only">ipv4_only</option>
-                  <option value="ipv6_only">ipv6_only</option>
-                </select>
-              </label>
-              <label class="form-row-2">
-                <span>DOH 服务器</span>
-                <select id="field-dns-remote-preset">
-                  <option value="google">https://dns.google/dns-query</option>
-                  <option value="cloudflare">https://cloudflare-dns.com/dns-query</option>
-                  <option value="custom">自定义</option>
-                </select>
-              </label>
-              <label id="field-dns-remote-url-wrap" class="form-row-custom">
-                <span>自定义 DOH 地址</span>
-                <input id="field-dns-remote-url" type="text" placeholder="https://1.1.1.1/dns-query" />
-              </label>
-              <label class="form-row-2">
-                <span>DoH 引导解析 DNS</span>
-                <select id="field-dns-bootstrap-preset">
-                  <option value="1.1.1.1">1.1.1.1</option>
-                  <option value="8.8.8.8">8.8.8.8</option>
-                  <option value="223.5.5.5">223.5.5.5</option>
-                  <option value="custom">自定义</option>
-                </select>
-              </label>
-              <label id="field-dns-bootstrap-wrap" class="form-row-custom is-hidden">
-                <span>自定义引导解析 DNS</span>
-                <input id="field-dns-bootstrap" type="text" placeholder="223.5.5.5" />
-              </label>
-              <label class="form-row-3">
-                <span>默认路由出口</span>
-                <select id="field-route-final"></select>
-              </label>
-              <label class="form-row-3">
-                <span>自动启动</span>
-                <select id="field-app-auto-start">
-                  <option value="true">是</option>
-                  <option value="false">否</option>
-                </select>
-              </label>
-              <label class="form-row-3">
-                <span>更新订阅后自动配置代理</span>
-                <select id="field-app-auto-configure-subscription">
-                  <option value="true">是</option>
-                  <option value="false">否</option>
-                </select>
-              </label>
-            </div>
             <div class="section-heading socks-services-heading">
-              <h3>订阅地址</h3>
+              <h2>SOCKS5 服务 <span id="socks-count" class="editor-status" style="font-size:13px;font-weight:400">0 个服务</span></h2>
+              <div class="section-heading-actions">
+                <button id="auto-configure-socks" type="button">一键配置</button>
+                <button id="edit-socks-service" type="button">编辑服务</button>
+                <button id="export-socks" type="button">导出</button>
+                <button id="copy-socks" type="button">复制</button>
+              </div>
+            </div>
+            <div id="socks-services" class="timeline"></div>
+          </section>
+
+          <section class="embedded-section">
+            <div class="section-heading socks-services-heading">
+              <h2>订阅地址</h2>
               <div class="section-heading-actions">
                 <button id="refresh-sub" type="button">更新订阅</button>
-                <button id="open-sub-auto-update" type="button">自动更新设置</button>
                 <button id="add-subscription-url" type="button">+ 添加订阅地址</button>
               </div>
             </div>
             <div id="subscription-urls" class="timeline"></div>
-            <div class="section-heading socks-services-heading">
-              <h3>SOCKS5 服务 <span id="socks-count" class="editor-status" style="font-size:13px;font-weight:400">0 个服务</span></h3>
+          </section>
+        </section>
+
+        <section data-section="dns" class="section">
+          <section class="embedded-section">
+            <div class="section-heading">
+              <h2>基础配置</h2>
               <div class="section-heading-actions">
-                <button id="export-socks" type="button">导出 SOCKS5 服务信息</button>
-                <button id="copy-socks" type="button">复制 SOCKS5 服务信息</button>
-                <button id="auto-configure-socks" type="button">一键配置 SOCKS5 服务</button>
-                <button id="edit-socks-service" type="button">编辑 SOCKS5 服务</button>
+                <button id="save-config" type="button">保存配置</button>
+                <div id="editor-status" class="editor-status is-saved">配置已保存</div>
               </div>
             </div>
-            <p class="form-note">表单模式当前覆盖高频字段；复杂规则、DNS 服务器和多端口高级配置请切换到 JSON 模式。</p>
-          </div>
 
-          <div id="json-view" class="config-view is-hidden">
-            <textarea id="config-editor" spellcheck="false"></textarea>
+            <div id="form-view" class="config-view">
+              <div class="form-grid form-grid-basic">
+                <label>
+                  <span>Web UI 监听地址</span>
+                  <input id="field-app-host" type="text" />
+                </label>
+                <label>
+                  <span>Web UI 端口</span>
+                  <input id="field-app-port" type="number" min="1" step="1" />
+                </label>
+                <label>
+                  <span>sing-box 二进制路径</span>
+                  <input id="field-app-binary" type="text" />
+                </label>
+                <label>
+                  <span>日志级别</span>
+                  <select id="field-app-log-level">
+                    <option value="trace">trace</option>
+                    <option value="debug">debug</option>
+                    <option value="info">info</option>
+                    <option value="warn">warn</option>
+                    <option value="error">error</option>
+                    <option value="fatal">fatal</option>
+                    <option value="panic">panic</option>
+                  </select>
+                </label>
+                <label class="form-row-2">
+                  <span>DNS 策略</span>
+                  <select id="field-dns-strategy">
+                    <option value="prefer_ipv4">prefer_ipv4</option>
+                    <option value="prefer_ipv6">prefer_ipv6</option>
+                    <option value="ipv4_only">ipv4_only</option>
+                    <option value="ipv6_only">ipv6_only</option>
+                  </select>
+                </label>
+                <label class="form-row-2">
+                  <span>DOH 服务器</span>
+                  <select id="field-dns-remote-preset">
+                    <option value="google">https://dns.google/dns-query</option>
+                    <option value="cloudflare">https://cloudflare-dns.com/dns-query</option>
+                    <option value="custom">自定义</option>
+                  </select>
+                </label>
+                <label id="field-dns-remote-url-wrap" class="form-row-custom">
+                  <span>自定义 DOH 地址</span>
+                  <input id="field-dns-remote-url" type="text" placeholder="https://1.1.1.1/dns-query" />
+                </label>
+                <label class="form-row-2">
+                  <span>DoH 引导解析 DNS</span>
+                  <select id="field-dns-bootstrap-preset">
+                    <option value="1.1.1.1">1.1.1.1</option>
+                    <option value="8.8.8.8">8.8.8.8</option>
+                    <option value="223.5.5.5">223.5.5.5</option>
+                    <option value="custom">自定义</option>
+                  </select>
+                </label>
+                <label id="field-dns-bootstrap-wrap" class="form-row-custom is-hidden">
+                  <span>自定义引导解析 DNS</span>
+                  <input id="field-dns-bootstrap" type="text" placeholder="223.5.5.5" />
+                </label>
+                <label class="form-row-3">
+                  <span>默认路由出口</span>
+                  <select id="field-route-final"></select>
+                </label>
+                <label class="form-row-3">
+                  <span>自动启动</span>
+                  <select id="field-app-auto-start">
+                    <option value="true">是</option>
+                    <option value="false">否</option>
+                  </select>
+                </label>
+                <label class="form-row-3">
+                  <span>更新订阅后自动配置代理</span>
+                  <select id="field-app-auto-configure-subscription">
+                    <option value="true">是</option>
+                    <option value="false">否</option>
+                  </select>
+                </label>
+              </div>
+              <p class="form-note">复杂规则、DNS 服务器和多端口高级配置请在「JSON 模式」中编辑。</p>
+            </div>
+          </section>
+        </section>
+
+        <section data-section="kernel" class="section">
+          <section class="embedded-section">
+            <div class="section-heading">
+              <h2>内核管理</h2>
+              <div class="section-heading-actions">
+                <button id="kernel-architecture-detect" type="button">检测当前架构</button>
+                <button id="kernel-check" type="button">检查内核版本</button>
+                <button id="kernel-check-updates" type="button">检查版本更新</button>
+              </div>
+            </div>
+            <div class="kernel-control-row">
+              <div class="kernel-pickers">
+                <select id="kernel-arch-select">
+                  <option value="windows-amd64">windows-amd64</option>
+                  <option value="windows-arm64">windows-arm64</option>
+                  <option value="linux-amd64">linux-amd64</option>
+                  <option value="linux-arm64">linux-arm64</option>
+                  <option value="darwin-amd64">darwin-amd64</option>
+                  <option value="darwin-arm64">darwin-arm64</option>
+                </select>
+                <select id="kernel-version-select"></select>
+              </div>
+              <div class="actions actions-inline">
+                <button id="kernel-select-version" type="button">设为计划版本</button>
+                <button id="kernel-download" type="button">拉取 sing-box 内核</button>
+              </div>
+            </div>
+          </section>
+          <div class="info-grid" style="margin-top:16px">
+            <section class="embedded-section">
+              <div class="section-heading">
+                <h3>架构信息</h3>
+                <div class="view-switch">
+                  <button id="switch-architecture-form" class="switch-button is-active" type="button">表单</button>
+                  <button id="switch-architecture-json" class="switch-button" type="button">JSON</button>
+                </div>
+              </div>
+              <div id="architecture-form-view" class="info-view">
+                <div id="architecture-form" class="kv-grid"></div>
+              </div>
+              <div id="architecture-json-view" class="info-view is-hidden">
+                <pre id="architecture"></pre>
+              </div>
+            </section>
+            <section class="embedded-section">
+              <div class="section-heading">
+                <h3>内核状态 <span id="kernel-status-badge" class="editor-status">未下载</span></h3>
+                <div class="view-switch">
+                  <button id="switch-kernel-form" class="switch-button is-active" type="button">表单</button>
+                  <button id="switch-kernel-json" class="switch-button" type="button">JSON</button>
+                </div>
+              </div>
+              <div id="kernel-form-view" class="info-view">
+                <div id="kernel-form" class="kv-grid"></div>
+              </div>
+              <div id="kernel-json-view" class="info-view is-hidden">
+                <pre id="kernel"></pre>
+              </div>
+            </section>
           </div>
         </section>
 
-        <div class="info-grid" style="margin-top:24px">
+        <section data-section="scheduler" class="section">
           <section class="embedded-section">
             <div class="section-heading">
-              <h2>订阅节点</h2>
-              <div class="view-switch">
-                <button id="switch-subscription-form" class="switch-button is-active" type="button">表单模式</button>
-                <button id="switch-subscription-json" class="switch-button" type="button">JSON 模式</button>
+              <h2>订阅调度</h2>
+              <div class="section-heading-actions">
+                <button id="open-sub-auto-update" type="button">自动更新设置</button>
+                <button id="manage-nodes" type="button">前往节点管理</button>
               </div>
             </div>
             <div id="subscription-form-view" class="info-view">
-              <div class="section-heading-actions">
-                <button id="manage-nodes" type="button">节点管理</button>
-              </div>
               <div id="subscription-form" class="kv-grid"></div>
             </div>
             <div id="subscription-json-view" class="info-view is-hidden">
               <pre id="nodes"></pre>
             </div>
-          </section>
-
-        </div>
-
-      </div>
-
-      <div id="tab-logs" class="tab-panel is-hidden">
-        <section class="embedded-section">
-          <div class="section-heading">
-            <h2>实时日志</h2>
-            <div class="view-switch">
-              <button id="switch-logs-form" class="switch-button is-active" type="button">表单模式</button>
-              <button id="switch-logs-json" class="switch-button" type="button">JSON 模式</button>
+            <div class="view-switch" style="margin-top:12px">
+              <button id="switch-subscription-form" class="switch-button is-active" type="button">表单</button>
+              <button id="switch-subscription-json" class="switch-button" type="button">JSON</button>
             </div>
-          </div>
-          <div id="logs-form-view" class="info-view">
-            <div id="logs-form" class="timeline"></div>
-          </div>
-          <div id="logs-json-view" class="info-view is-hidden">
-            <pre id="logs"></pre>
-          </div>
+          </section>
         </section>
+
+        <section data-section="logs" class="section">
+          <section class="embedded-section">
+            <div class="section-heading">
+              <h2>实时日志</h2>
+              <div class="view-switch">
+                <button id="switch-logs-form" class="switch-button is-active" type="button">表单</button>
+                <button id="switch-logs-json" class="switch-button" type="button">JSON</button>
+              </div>
+            </div>
+            <div id="logs-form-view" class="info-view">
+              <div id="logs-form" class="timeline"></div>
+            </div>
+            <div id="logs-json-view" class="info-view is-hidden">
+              <pre id="logs"></pre>
+            </div>
+          </section>
+        </section>
+
+        <section data-section="json" class="section">
+          <section class="embedded-section">
+            <div class="section-heading">
+              <h2>JSON 模式</h2>
+              <div class="section-heading-actions">
+                <button id="save-json-config" type="button">保存配置</button>
+              </div>
+            </div>
+            <p class="form-note" style="margin:0 0 12px">直接编辑完整业务配置。保存后自动生成 sing-box.json，运行中自动重启应用。</p>
+            <div id="json-view" class="config-view">
+              <textarea id="config-editor" spellcheck="false"></textarea>
+            </div>
+          </section>
+        </section>
+
+        <section data-section="about" class="section">
+          <section class="embedded-section">
+            <div class="section-heading">
+              <h2>关于 sub2socks5</h2>
+            </div>
+            <p style="color:var(--text-muted); line-height: 1.6;">
+              基于 Go + sing-box 的本地代理管理器，把订阅、手动节点和节点组组织成可视化、可多端口分流的 SOCKS5 服务。<br/>
+              支持 Docker 容器化部署、Web UI Bearer Token 鉴权、自动订阅更新、节点测速与一键配置。
+            </p>
+          </section>
+        </section>
+
+        <!-- 兼容性占位：保留旧 ID 供 app.js 监听器引用，不参与显示 -->
+        <div style="display:none">
+          <button id="switch-form" class="switch-button" type="button"></button>
+          <button id="switch-json" class="switch-button" type="button"></button>
+        </div>
       </div>
-    </section>
-  </main>
+    </main>
+  </div>
 
   <div id="socks-config-overlay" class="overlay is-hidden" aria-hidden="true">
     <div class="overlay-card">
