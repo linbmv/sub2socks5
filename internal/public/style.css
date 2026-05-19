@@ -209,6 +209,31 @@ button:disabled {
   background: #fff7ed;
   color: #9a3412;
 }
+.bulk-add-example {
+  padding: 3px 10px;
+  font-size: 12px;
+  background: var(--inner-card-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 999px;
+  color: var(--text-main);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.bulk-add-example:hover {
+  background: #eef0ff;
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+details > summary::marker { color: var(--text-muted); }
+details[open] > summary { margin-bottom: 4px; }
+.bulk-add-overlay code,
+.overlay-card code {
+  background: rgba(255,255,255,0.7);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
 .editor-status {
   padding: 6px 10px;
   border-radius: 999px;

@@ -90,10 +90,34 @@
         <button id="bulk-add-mode-keyword" type="button" class="tab-button is-active">关键词包含</button>
         <button id="bulk-add-mode-regex" type="button" class="tab-button">正则表达式</button>
       </div>
-      <label style="display:block;margin-bottom:10px;">
+      <label style="display:block;margin-bottom:8px;">
         <span style="display:block;margin-bottom:4px;color:var(--text-muted);font-size:13px;">表达式</span>
         <input id="bulk-add-pattern" type="text" placeholder="例：香港 或 (HK|香港)" style="width:100%;" />
       </label>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
+        <span style="font-size:12px;color:var(--text-muted);align-self:center;">示例：</span>
+        <button type="button" class="bulk-add-example" data-mode="keyword" data-pattern="香港,HK">香港,HK</button>
+        <button type="button" class="bulk-add-example" data-mode="keyword" data-pattern="日本,JP,Japan">日本,JP,Japan</button>
+        <button type="button" class="bulk-add-example" data-mode="keyword" data-pattern="新加坡,SG,Singapore">新加坡,SG,Singapore</button>
+        <button type="button" class="bulk-add-example" data-mode="regex" data-pattern="(HK|香港|Hong\s*Kong)">正则·港</button>
+        <button type="button" class="bulk-add-example" data-mode="regex" data-pattern="^(?!.*(剩余|流量|到期|官网)).*$">正则·排除流量页</button>
+        <button type="button" class="bulk-add-example" data-mode="regex" data-pattern="\b0\.[1-5]x\b">正则·低倍率(0.1x-0.5x)</button>
+      </div>
+      <details style="margin-bottom:10px;">
+        <summary style="cursor:pointer;font-size:13px;color:var(--accent-strong);">查看语法说明</summary>
+        <div style="margin-top:8px;padding:10px 12px;background:var(--inner-card-bg);border-radius:6px;font-size:12px;line-height:1.7;color:var(--text-main);">
+          <div style="margin-bottom:6px;"><strong>关键词模式</strong>：用 <code>,</code> 或 <code>，</code> 分隔多个关键词，命中其一即匹配。例：<code>香港,HK</code>。</div>
+          <div><strong>正则模式</strong>（JavaScript 语法）：</div>
+          <ul style="margin:4px 0 0;padding-left:20px;">
+            <li><code>香港|HK</code> — 或</li>
+            <li><code>(?:HK|香港)</code> — 非捕获分组</li>
+            <li><code>\b</code> — 单词边界，<code>\bHK\b</code> 不会误匹配 <code>HKEX</code></li>
+            <li><code>^(?!.*流量).*$</code> — 排除含「流量」的节点</li>
+            <li><code>\.5x</code> — 字面 <code>.5x</code></li>
+            <li>不支持 Perl 内联标志 <code>(?i)</code>，开头会自动剥离；用复选框「忽略大小写」</li>
+          </ul>
+        </div>
+      </details>
       <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;color:var(--text-muted);font-size:13px;">
         <input id="bulk-add-case-insensitive" type="checkbox" checked />
         忽略大小写

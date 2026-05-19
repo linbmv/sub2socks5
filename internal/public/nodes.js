@@ -826,6 +826,20 @@ bulkAddOverlay?.addEventListener('click', (event) => {
   if (event.target === bulkAddOverlay) hideBulkAddOverlay();
 });
 
+document.querySelectorAll('.bulk-add-example').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const mode = btn.dataset.mode === 'regex' ? 'regex' : 'keyword';
+    const pattern = btn.dataset.pattern || '';
+    bulkAddState.mode = mode;
+    syncBulkAddModeButtons();
+    if (bulkAddPatternInput) {
+      bulkAddPatternInput.value = pattern;
+      bulkAddPatternInput.focus();
+    }
+    renderBulkAddPreview();
+  });
+});
+
 load().catch((error) => setStatus(error.message, 'error'));
 
 function findDuplicateTag(items) {
