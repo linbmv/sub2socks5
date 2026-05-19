@@ -335,7 +335,7 @@ function renderSubscriptionUrls() {
         </label>
       </div>
       <div class="section-heading-actions">
-        ${formSubscriptionUrls.length > 1 ? `<button type="button" data-remove-subscription="${index}">删除</button>` : ''}
+        <button type="button" data-remove-subscription="${index}">删除</button>
       </div>
     `;
     subscriptionUrlsEl.appendChild(block);
@@ -1947,12 +1947,13 @@ document.addEventListener('click', (event) => {
 
   if (target.dataset.removeSubscription) {
     const index = Number(target.dataset.removeSubscription);
-    if (formSubscriptionUrls.length > 1) {
-      formSubscriptionUrls.splice(index, 1);
-      renderSubscriptionUrls();
-      formTouched = true;
-      updateEditorState();
+    formSubscriptionUrls.splice(index, 1);
+    if (!formSubscriptionUrls.length) {
+      formSubscriptionUrls.push('');
     }
+    renderSubscriptionUrls();
+    formTouched = true;
+    updateEditorState();
   }
 
   if (target.dataset.removeSubFilter) {
