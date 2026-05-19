@@ -722,11 +722,23 @@ function computeBulkMatchedTags() {
   const caseInsensitive = !!bulkAddCaseInput?.checked;
   const candidates = getSelectableNodesWithoutChains();
   if (bulkAddState.mode === 'regex') {
+    // 兼容 Perl/PCRE 风格内联标志 (?i) (?im) (?ims)；JavaScript RegExp 不支持，需要转成 flags 参数。
+    let pattern = raw;
+    let flags = caseInsensitive ? 'i' : '';
+    const inlineFlag = pattern.match(/^\(\?([imsu]+)\)/);
+    if (inlineFlag) {
+      pattern = pattern.slice(inlineFlag[0].length);
+      for (const ch of inlineFlag[1]) if (!flags.includes(ch)) flags += ch;
+    }
     let regex;
     try {
-      regex = new RegExp(raw, caseInsensitive ? 'i' : '');
+      regex = new RegExp(pattern, flags);
     } catch (err) {
-      return { tags: [], error: `正则错误：${err.message}` };
+      let hint = '';
+      if (/^\(\?[a-zA-Z-]/.test(raw)) {
+        hint = '（提示：JavaScript 正则不支持 (?i) 等内联标志，请勾选「忽略大小写」并删掉 (?i)；分组请用 (?:...)）';
+      }
+      return { tags: [], error: `正则错误：${err.message}${hint}` };
     }
     const tags = candidates.filter((n) => regex.test(n.tag || '')).map((n) => n.tag);
     return { tags, error: '' };
