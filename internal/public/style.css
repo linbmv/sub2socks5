@@ -853,7 +853,124 @@ button:disabled {
   }
 }
 
-/* ===== 左侧导航 + 右侧内容区布局 ===== */
+/* ===== 登录页 ===== */
+.login-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 28px 28px 24px;
+  box-shadow: var(--card-shadow);
+}
+.login-title {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--accent-strong);
+}
+.login-sub {
+  margin: 0 0 20px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+.login-field {
+  display: block;
+  margin-bottom: 14px;
+}
+.login-field span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.login-field input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+.login-error {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  font-size: 13px;
+}
+.login-error.is-hidden {
+  display: none;
+}
+#login-submit {
+  width: 100%;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 11px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+#login-submit:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+#login-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.login-tip {
+  margin: 16px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.login-tip code {
+  background: var(--inner-card-bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+/* ===== 侧边栏登出按钮 ===== */
+.sidebar-footer {
+  margin-top: auto;
+  padding: 12px 10px;
+  border-top: 1px solid var(--card-border);
+}
+.sidebar-footer .nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: var(--text-main);
+}
+.sidebar-footer .nav-item.is-hidden {
+  display: none;
+}
+@media (max-width: 900px) {
+  .sidebar-footer {
+    margin-top: 0;
+    border-top: none;
+    border-left: 1px solid var(--card-border);
+    padding: 10px 12px;
+  }
+}
+
 .layout-shell {
   display: flex;
   min-height: 100vh;

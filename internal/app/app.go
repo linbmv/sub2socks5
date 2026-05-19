@@ -111,6 +111,9 @@ func RunWithStaticFS(staticFS fs.FS) error {
 	mux.HandleFunc("/api/kernel/releases/update", app.handleKernelReleasesUpdate)
 	mux.HandleFunc("/api/kernel/plan", app.handleKernelPlan)
 	mux.HandleFunc("/api/kernel/download", app.handleKernelDownload)
+	mux.HandleFunc("/api/auth/status", app.handleAuthStatus)
+	mux.HandleFunc("/api/auth/login", app.handleAuthLogin)
+	mux.HandleFunc("/api/auth/logout", app.handleAuthLogout)
 	mux.HandleFunc("/", app.handleStatic)
 
 	host := getString(getMap(app.cfg, "app"), "host", "0.0.0.0")
@@ -412,6 +415,7 @@ func (a *App) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"download":           a.downloadState,
 			"deploymentHint":     deploymentHint(),
 			"externalHost":       strings.TrimSpace(os.Getenv("SUB2SOCKS5_EXTERNAL_HOST")),
+			"authEnabled":        strings.TrimSpace(os.Getenv("SUB2SOCKS5_AUTH_TOKEN")) != "",
 		})
 	case http.MethodPost:
 		var body map[string]any
@@ -888,6 +892,8 @@ func (a *App) handleStatic(w http.ResponseWriter, r *http.Request) {
 	}
 	if p == "/" {
 		p = "/index.html"
+	} else if p == "/login" {
+		p = "/login.html"
 	}
 	clean := strings.TrimPrefix(path.Clean(p), "/")
 	var (
@@ -2485,6 +2491,11 @@ func withAuth(next http.Handler) http.Handler {
 	}
 	expected := []byte(token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 公开端点：登录页本身、登录页样式资源、auth 三个 API
+		if isAuthPublicPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		provided := ""
 		if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 			provided = strings.TrimPrefix(h, "Bearer ")
@@ -2497,13 +2508,7 @@ func withAuth(next http.Handler) http.Handler {
 		if provided == "" {
 			if q := r.URL.Query().Get("token"); q != "" {
 				if subtle.ConstantTimeCompare([]byte(q), expected) == 1 {
-					http.SetCookie(w, &http.Cookie{
-						Name:     "sub2socks5_token",
-						Value:    q,
-						Path:     "/",
-						HttpOnly: true,
-						SameSite: http.SameSiteLaxMode,
-					})
+					setAuthCookie(w, q)
 					qs := r.URL.Query()
 					qs.Del("token")
 					redirect := r.URL.Path
@@ -2517,12 +2522,112 @@ func withAuth(next http.Handler) http.Handler {
 			}
 		}
 		if subtle.ConstantTimeCompare([]byte(provided), expected) != 1 {
+			// 浏览器请求 → 跳登录页；API/AJAX 请求 → 401 JSON
+			if isBrowserNavigation(r) {
+				next := r.URL.Path
+				if r.URL.RawQuery != "" {
+					next += "?" + r.URL.RawQuery
+				}
+				http.Redirect(w, r, "/login?next="+url.QueryEscape(next), http.StatusSeeOther)
+				return
+			}
 			w.Header().Set("WWW-Authenticate", `Bearer realm="sub2socks5"`)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			w.Header().Set("content-type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": "Unauthorized", "status": 401}})
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isAuthPublicPath(p string) bool {
+	switch p {
+	case "/login", "/login.html", "/style.css",
+		"/api/auth/status", "/api/auth/login", "/api/auth/logout":
+		return true
+	}
+	return false
+}
+
+func isBrowserNavigation(r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	accept := r.Header.Get("Accept")
+	return strings.Contains(accept, "text/html")
+}
+
+func setAuthCookie(w http.ResponseWriter, value string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "sub2socks5_token",
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func (a *App) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, "GET")
+		return
+	}
+	enabled := strings.TrimSpace(os.Getenv("SUB2SOCKS5_AUTH_TOKEN")) != ""
+	authed := false
+	if enabled {
+		token := []byte(strings.TrimSpace(os.Getenv("SUB2SOCKS5_AUTH_TOKEN")))
+		if c, err := r.Cookie("sub2socks5_token"); err == nil {
+			authed = subtle.ConstantTimeCompare([]byte(c.Value), token) == 1
+		}
+		if !authed {
+			if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+				authed = subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(h, "Bearer ")), token) == 1
+			}
+		}
+	}
+	ok(w, map[string]any{"enabled": enabled, "authenticated": authed || !enabled})
+}
+
+func (a *App) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, "POST")
+		return
+	}
+	expected := strings.TrimSpace(os.Getenv("SUB2SOCKS5_AUTH_TOKEN"))
+	if expected == "" {
+		fail(w, http.StatusBadRequest, "鉴权未启用")
+		return
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := decodeJSON(r.Body, &body); err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(body.Token), []byte(expected)) != 1 {
+		fail(w, http.StatusUnauthorized, "Token 错误")
+		return
+	}
+	setAuthCookie(w, body.Token)
+	ok(w, map[string]any{"authenticated": true})
+}
+
+func (a *App) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, "POST")
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "sub2socks5_token",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+	ok(w, map[string]any{"authenticated": false})
 }
 
 func withCORS(next http.Handler) http.Handler {

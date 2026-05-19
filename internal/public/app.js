@@ -170,10 +170,12 @@ async function load() {
     logs: logsData,
     download: downloadData,
     deploymentHint: configData.deploymentHint || null,
-    externalHost: typeof configData.externalHost === 'string' ? configData.externalHost.trim() : ''
+    externalHost: typeof configData.externalHost === 'string' ? configData.externalHost.trim() : '',
+    authEnabled: !!configData.authEnabled
   };
 
   renderDeploymentBanner(latestData.deploymentHint);
+  renderLogoutButton(latestData.authEnabled);
 
   const formattedConfig = JSON.stringify(configData.config, null, 2);
   const shouldReplaceEditor = !isEditorDirty() || editor.value.trim() === '' || editor.value === lastSavedConfigText;
@@ -1006,6 +1008,19 @@ function renderDeploymentBanner(hint) {
   el.classList.remove('is-hidden');
   el.textContent = hint.message;
 }
+
+function renderLogoutButton(enabled) {
+  const btn = document.getElementById('sidebar-logout');
+  if (!btn) return;
+  btn.classList.toggle('is-hidden', !enabled);
+}
+
+document.getElementById('sidebar-logout')?.addEventListener('click', async () => {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+  } catch (_) {}
+  window.location.replace('/login');
+});
 
 function updateCopySocksPreviews() {
   const list = buildSocksAddressList();
