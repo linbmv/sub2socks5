@@ -5,8 +5,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -94,6 +96,11 @@ func RunWithStaticFS(staticFS fs.FS) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/config", app.handleConfig)
+	mux.HandleFunc("/api/config/patch", app.handleConfigPatch)
+	mux.HandleFunc("/api/services", app.handleServicesList)
+	mux.HandleFunc("/api/services/", app.handleServicesItem)
+	mux.HandleFunc("/api/runtime/state", app.handleRuntimeState)
+	mux.HandleFunc("/api/diagnostics", app.handleDiagnostics)
 	mux.HandleFunc("/api/subscription/refresh", app.handleSubscriptionRefresh)
 	mux.HandleFunc("/api/nodes", app.handleNodes)
 	mux.HandleFunc("/api/nodes/import", app.handleNodeImport)
@@ -647,6 +654,10 @@ func (a *App) startRuntimeLocked() error {
 	a.proc = cmd
 	a.runtimeInfo["state"] = "running"
 	a.runtimeInfo["running"] = true
+	a.runtimeInfo["startedAt"] = time.Now().Format(time.RFC3339)
+	a.runtimeInfo["pid"] = cmd.Process.Pid
+	a.runtimeInfo["runningConfigHash"] = configHashOf(a.cfg)
+	a.runtimeInfo["lastError"] = ""
 	a.appendRuntimeLog("sing-box started")
 	go a.captureLogs(stdout)
 	go a.captureLogs(stderr)
@@ -657,7 +668,9 @@ func (a *App) startRuntimeLocked() error {
 			a.proc = nil
 			a.runtimeInfo["state"] = "stopped"
 			a.runtimeInfo["running"] = false
+			a.runtimeInfo["pid"] = 0
 			if waitErr != nil {
+				a.runtimeInfo["lastError"] = waitErr.Error()
 				a.appendRuntimeLog("sing-box exited with error: " + waitErr.Error())
 			} else {
 				a.appendRuntimeLog("sing-box exited")
@@ -704,6 +717,7 @@ func (a *App) handleRuntimeStop(w http.ResponseWriter, r *http.Request) {
 	}
 	a.runtimeInfo["state"] = "stopped"
 	a.runtimeInfo["running"] = false
+	a.runtimeInfo["pid"] = 0
 	a.appendRuntimeLog("runtime stop requested")
 	rt := a.runtimeInfo
 	a.mu.Unlock()
@@ -2630,6 +2644,265 @@ func (a *App) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	ok(w, map[string]any{"authenticated": false})
 }
 
+// ===== Phase A: PATCH /api/config / /api/services CRUD / runtime state / diagnostics =====
+
+func (a *App) handleConfigPatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch && r.Method != http.MethodPost {
+		methodNotAllowed(w, "PATCH, POST")
+		return
+	}
+	var patch map[string]any
+	if err := decodeJSON(r.Body, &patch); err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	a.mu.Lock()
+	beforeHash := configHashOf(a.cfg)
+	merged := mergePatch(a.cfg, patch)
+	a.cfg = merged
+	_ = writeJSON(filepath.Join(a.dataDir, "app-config.json"), a.cfg)
+	generated := buildSingBoxConfig(a.cfg, a.subState)
+	_ = writeJSON(filepath.Join(a.runtimeDir, "sing-box.json"), generated)
+	afterHash := configHashOf(a.cfg)
+	restarted := false
+	if afterHash != beforeHash && a.proc != nil && a.proc.Process != nil {
+		if err := a.startRuntimeLocked(); err != nil {
+			a.appendRuntimeLog("apply config patch failed: " + err.Error())
+			a.mu.Unlock()
+			fail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		restarted = true
+		a.appendRuntimeLog("config patched and runtime restarted")
+	}
+	state := a.runtimeStateLocked()
+	a.mu.Unlock()
+	ok(w, map[string]any{
+		"config":     a.cfg,
+		"configHash": afterHash,
+		"restarted":  restarted,
+		"runtime":    state,
+	})
+}
+
+func (a *App) handleServicesList(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		a.mu.RLock()
+		defer a.mu.RUnlock()
+		ports := getSlice(a.cfg, "ports")
+		services := make([]map[string]any, 0, len(ports))
+		for _, p := range ports {
+			if pm, ok := p.(map[string]any); ok {
+				services = append(services, serviceWithID(pm))
+			}
+		}
+		ok(w, map[string]any{"services": services})
+	case http.MethodPost:
+		var body map[string]any
+		if err := decodeJSON(r.Body, &body); err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		ports := getSlice(a.cfg, "ports")
+		listen := strings.TrimSpace(mustStr(body["listen"]))
+		if listen == "" {
+			listen = "0.0.0.0"
+		}
+		port := int(toFloat(body["port"]))
+		if port <= 0 {
+			port = a.nextAvailableSocksPort(18081, 18100)
+		}
+		if port == 0 {
+			fail(w, http.StatusBadRequest, "无可用端口（18081-18100 已用尽）")
+			return
+		}
+		target := strings.TrimSpace(mustStr(body["target"]))
+		if target == "" {
+			target = "proxy"
+		}
+		tag := strings.TrimSpace(mustStr(body["tag"]))
+		if tag == "" {
+			tag = fmt.Sprintf("socks-%d", port)
+		}
+		svc := map[string]any{
+			"tag":     tag,
+			"listen":  listen,
+			"port":    port,
+			"target":  target,
+			"sniff":   true,
+			"enabled": true,
+		}
+		ports = append(ports, svc)
+		a.cfg["ports"] = ports
+		_ = writeJSON(filepath.Join(a.dataDir, "app-config.json"), a.cfg)
+		generated := buildSingBoxConfig(a.cfg, a.subState)
+		_ = writeJSON(filepath.Join(a.runtimeDir, "sing-box.json"), generated)
+		if a.proc != nil && a.proc.Process != nil {
+			_ = a.startRuntimeLocked()
+		}
+		ok(w, map[string]any{"service": serviceWithID(svc), "configHash": configHashOf(a.cfg)})
+	default:
+		methodNotAllowed(w, "GET, POST")
+	}
+}
+
+func (a *App) handleServicesItem(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/services/")
+	if id == "" || strings.Contains(id, "/") {
+		fail(w, http.StatusBadRequest, "Invalid service id")
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	ports := getSlice(a.cfg, "ports")
+	idx := -1
+	for i, p := range ports {
+		if pm, ok := p.(map[string]any); ok {
+			if mustStr(pm["tag"]) == id {
+				idx = i
+				break
+			}
+		}
+	}
+	if idx < 0 {
+		fail(w, http.StatusNotFound, "Service not found")
+		return
+	}
+	switch r.Method {
+	case http.MethodPut, http.MethodPatch:
+		var body map[string]any
+		if err := decodeJSON(r.Body, &body); err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		current, _ := ports[idx].(map[string]any)
+		if current == nil {
+			current = map[string]any{}
+		}
+		merged := mergePatch(current, body)
+		ports[idx] = merged
+		a.cfg["ports"] = ports
+		_ = writeJSON(filepath.Join(a.dataDir, "app-config.json"), a.cfg)
+		generated := buildSingBoxConfig(a.cfg, a.subState)
+		_ = writeJSON(filepath.Join(a.runtimeDir, "sing-box.json"), generated)
+		if a.proc != nil && a.proc.Process != nil {
+			_ = a.startRuntimeLocked()
+		}
+		ok(w, map[string]any{"service": serviceWithID(merged), "configHash": configHashOf(a.cfg)})
+	case http.MethodDelete:
+		ports = append(ports[:idx], ports[idx+1:]...)
+		a.cfg["ports"] = ports
+		_ = writeJSON(filepath.Join(a.dataDir, "app-config.json"), a.cfg)
+		generated := buildSingBoxConfig(a.cfg, a.subState)
+		_ = writeJSON(filepath.Join(a.runtimeDir, "sing-box.json"), generated)
+		if a.proc != nil && a.proc.Process != nil {
+			_ = a.startRuntimeLocked()
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w, "PUT, PATCH, DELETE")
+	}
+}
+
+func serviceWithID(svc map[string]any) map[string]any {
+	out := map[string]any{}
+	for k, v := range svc {
+		out[k] = v
+	}
+	out["id"] = mustStr(svc["tag"])
+	return out
+}
+
+func (a *App) handleRuntimeState(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, "GET")
+		return
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	ok(w, a.runtimeStateLocked())
+}
+
+func (a *App) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, "GET")
+		return
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	issues := []map[string]any{}
+	seenTag := map[string]bool{}
+	seenListenPort := map[string]bool{}
+	inDocker := runningInContainer()
+	availableTags := map[string]bool{}
+	for _, ob := range collectOutbounds(a.cfg, a.subState) {
+		if obm, ok := ob.(map[string]any); ok {
+			availableTags[mustStr(obm["tag"])] = true
+		}
+	}
+	for i, p := range getSlice(a.cfg, "ports") {
+		pm, _ := p.(map[string]any)
+		if pm == nil {
+			continue
+		}
+		path := fmt.Sprintf("/ports/%d", i)
+		tag := mustStr(pm["tag"])
+		listen := mustStr(pm["listen"])
+		port := getInt(pm, "port", 0)
+		target := mustStr(pm["target"])
+		if tag == "" || seenTag[tag] {
+			issues = append(issues, map[string]any{
+				"code": "duplicate_or_empty_tag", "severity": "error",
+				"path": path + "/tag", "message": "服务 tag 重复或为空", "autoFix": "rename",
+			})
+		}
+		seenTag[tag] = true
+		key := fmt.Sprintf("%s:%d", listen, port)
+		if port < 1 || port > 65535 || seenListenPort[key] {
+			issues = append(issues, map[string]any{
+				"code": "invalid_or_duplicate_port", "severity": "error",
+				"path": path + "/port", "message": "端口非法或重复", "autoFix": "autoPickPort",
+			})
+		}
+		seenListenPort[key] = true
+		if target != "" && !availableTags[target] {
+			issues = append(issues, map[string]any{
+				"code": "missing_target", "severity": "error",
+				"path": path + "/target", "message": "出口节点 " + target + " 不存在", "autoFix": "setTarget:proxy",
+			})
+		}
+		if listen == "127.0.0.1" && inDocker {
+			issues = append(issues, map[string]any{
+				"code": "listen_unreachable_in_docker", "severity": "warning",
+				"path": path + "/listen", "message": "Docker 容器内监听 127.0.0.1，外部不可达", "autoFix": "setListen:0.0.0.0",
+			})
+		}
+		if inDocker && (port < 18081 || port > 18100) {
+			issues = append(issues, map[string]any{
+				"code": "port_outside_published_range", "severity": "warning",
+				"path": path + "/port", "message": fmt.Sprintf("端口 %d 不在 compose 默认发布范围 18081-18100", port),
+			})
+		}
+	}
+	if !getBool(a.kernelStatus(), "installed", false) {
+		issues = append(issues, map[string]any{
+			"code": "kernel_missing", "severity": "error",
+			"path": "/kernel", "message": "sing-box 内核未安装", "autoFix": "downloadKernel",
+		})
+	}
+	running := a.proc != nil && a.proc.Process != nil
+	if running && configHashOf(a.cfg) != mustStr(a.runtimeInfo["runningConfigHash"]) {
+		issues = append(issues, map[string]any{
+			"code": "restart_needed", "severity": "warning",
+			"path": "/", "message": "运行配置已陈旧，重启 sing-box 后生效", "autoFix": "restartRuntime",
+		})
+	}
+	ok(w, map[string]any{"issues": issues, "inDocker": inDocker})
+}
+
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("x-content-type-options", "nosniff")
@@ -2690,6 +2963,145 @@ func decodeJSON(r io.Reader, v any) error {
 		b = []byte("{}")
 	}
 	return json.Unmarshal(b, v)
+}
+
+// ===== Phase A: configHash / restart-needed / runtime state / diagnostics =====
+
+// runtimeAffectingPaths 列出会影响 sing-box 行为的顶层 cfg 字段。
+// 改动这些 key 时需要重启 sing-box；其他 key（如 app.host/port/theme/logLevel）只持久化不重启。
+var runtimeAffectingPaths = []string{"ports", "dns", "routing", "nodeRegistry"}
+
+// configHashOf 计算"运行时相关字段"的 sha256 摘要，用于检测是否需要重启 sing-box。
+func configHashOf(cfg map[string]any) string {
+	subset := map[string]any{}
+	for _, k := range runtimeAffectingPaths {
+		if v, ok := cfg[k]; ok {
+			subset[k] = v
+		}
+	}
+	b, err := canonicalJSON(subset)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// canonicalJSON 输出 key 字典序的 JSON，保证哈希稳定。
+func canonicalJSON(v any) ([]byte, error) {
+	switch x := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var buf bytes.Buffer
+		buf.WriteByte('{')
+		for i, k := range keys {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			kb, _ := json.Marshal(k)
+			buf.Write(kb)
+			buf.WriteByte(':')
+			vb, err := canonicalJSON(x[k])
+			if err != nil {
+				return nil, err
+			}
+			buf.Write(vb)
+		}
+		buf.WriteByte('}')
+		return buf.Bytes(), nil
+	case []any:
+		var buf bytes.Buffer
+		buf.WriteByte('[')
+		for i, item := range x {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			vb, err := canonicalJSON(item)
+			if err != nil {
+				return nil, err
+			}
+			buf.Write(vb)
+		}
+		buf.WriteByte(']')
+		return buf.Bytes(), nil
+	default:
+		return json.Marshal(x)
+	}
+}
+
+// mergePatch 实现 RFC 7396 JSON Merge Patch：用 patch 浅合并到 base，null 表示删除。
+func mergePatch(base, patch map[string]any) map[string]any {
+	if base == nil {
+		base = map[string]any{}
+	}
+	for k, v := range patch {
+		if v == nil {
+			delete(base, k)
+			continue
+		}
+		if pm, ok := v.(map[string]any); ok {
+			if bm, ok := base[k].(map[string]any); ok {
+				base[k] = mergePatch(bm, pm)
+				continue
+			}
+			base[k] = mergePatch(map[string]any{}, pm)
+			continue
+		}
+		base[k] = v
+	}
+	return base
+}
+
+// runtimeStateLocked 返回结构化运行时状态，调用方需持有 a.mu。
+func (a *App) runtimeStateLocked() map[string]any {
+	state := mustStr(a.runtimeInfo["state"])
+	if state == "" {
+		state = "stopped"
+	}
+	return map[string]any{
+		"state":             state,
+		"running":           getBool(a.runtimeInfo, "running", false),
+		"pid":               getInt(a.runtimeInfo, "pid", 0),
+		"startedAt":         mustStr(a.runtimeInfo["startedAt"]),
+		"configHash":        configHashOf(a.cfg),
+		"runningConfigHash": mustStr(a.runtimeInfo["runningConfigHash"]),
+		"lastError":         mustStr(a.runtimeInfo["lastError"]),
+		"restartCount":      a.autoRestartAttempts,
+	}
+}
+
+// runningInContainer 通过 /.dockerenv 探测是否运行在 Docker 容器中。
+func runningInContainer() bool {
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	return false
+}
+
+// nextAvailableSocksPort 在 [start, end] 内挑选一个未被 cfg.ports[] 使用且系统上未被监听的端口。
+func (a *App) nextAvailableSocksPort(start, end int) int {
+	used := map[int]bool{}
+	for _, p := range getSlice(a.cfg, "ports") {
+		if pm, ok := p.(map[string]any); ok {
+			used[getInt(pm, "port", 0)] = true
+		}
+	}
+	for port := start; port <= end; port++ {
+		if used[port] {
+			continue
+		}
+		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			continue
+		}
+		_ = ln.Close()
+		return port
+	}
+	return 0
 }
 
 func mergeMap(base, incoming map[string]any) map[string]any {
