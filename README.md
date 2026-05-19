@@ -388,6 +388,173 @@ curl.exe --socks5-hostname 127.0.0.1:53456 --max-time 25 https://www.gstatic.com
 - 当前“运行中应用新配置”采用重启 `sing-box` 的方式，而不是热重载
 - 不建议把运行期文件和本地状态文件提交到 Git
 
+## Docker 部署（VPS 推荐）
+
+Docker 镜像内置 sub2socks5 主程序与 sing-box 默认内核（首次启动会 seed 到挂载卷的 `internal/bin/sing-box`）。`data`、`runtime`、`bin` 三个目录通过 bind mount 持久化。容器启动目录固定为 `/app`，匹配程序基于工作目录解析 `internal/{data,runtime,bin}` 的行为；也可以通过 `SUB2SOCKS5_ROOT` 改用任意路径。
+
+### 快速开始
+
+在 VPS 上安装 Docker Engine 和 Docker Compose v2 后，进入项目目录执行：
+
+```bash
+git clone https://github.com/sglinhome/sub2socks5.git
+cd sub2socks5
+mkdir -p data runtime bin
+sudo chown -R 10001:10001 data runtime bin
+docker compose up -d --build
+docker compose logs -f sub2socks5
+```
+
+默认 compose 使用 bridge 网络，并且只把 Web UI 与 SOCKS5 端口绑定到宿主机 `127.0.0.1`。Web UI 当前没有登录认证，响应头允许宽松 CORS，因此不要把 `18080` 暴露到公网。远程管理时使用 SSH 隧道（在本机执行）：
+
+```bash
+ssh -L 18080:127.0.0.1:18080 user@your-vps
+```
+
+随后在本机浏览器访问：
+
+```text
+http://127.0.0.1:18080
+```
+
+### 首次配置
+
+第一次进入 Web UI 后按以下顺序操作：
+
+1. 在内核管理页面获取 release 列表，并下载匹配当前容器架构的 sing-box 内核。首次下载约 30 秒，结果会持久化到挂载的 `./bin` 目录。
+2. 更新订阅，或在节点管理页导入手动节点。
+3. 保存配置后启动运行时；运行中保存配置会通过重启 sing-box 应用新配置。
+
+> ⚠️ **关键配置（bridge 模式必备，新手最容易遗漏）**
+>
+> 1. **监听地址**：配置 SOCKS5 服务时，必须把监听地址从默认的 `127.0.0.1` 改为 `0.0.0.0`，否则容器外完全无法连接。
+> 2. **端口范围**：bridge 模式下端口必须落在 `18081-18100` 范围内，否则 Docker 没有发布对应的宿主端口。如需更多端口，修改 `docker-compose.yml` 的 `ports` 段并同步 `Dockerfile` 的 `EXPOSE` 段。
+
+这里的 `0.0.0.0` 只表示监听容器内所有网卡。默认 compose 已把宿主机发布地址限制为 `127.0.0.1`，不会直接暴露给公网。
+
+### 从本地客户端连接 VPS 上的 SOCKS5
+
+默认 compose 把 SOCKS5 端口绑定到 VPS 的 `127.0.0.1`，公网无法直接访问。推荐使用 SSH 隧道访问（在本地执行，假设 SOCKS5 端口为 `18081`）：
+
+```bash
+ssh -L 18081:127.0.0.1:18081 user@your-vps
+curl --socks5-hostname 127.0.0.1:18081 \
+     --max-time 25 https://www.google.com/generate_204 \
+     -I -s -o /dev/null -w "%{http_code}\n"
+```
+
+预期输出：
+
+```text
+204
+```
+
+如果确需把 SOCKS5 端口开放给固定来源公网客户端，必须把 compose 中对应端口的宿主绑定从 `127.0.0.1` 改为 `0.0.0.0`（或具体的公网网卡 IP），并配合云厂商安全组与防火墙白名单。改动后再用 `vps.example.com:18081` 替换上面的 `127.0.0.1` 进行连通性验证。
+
+### 防火墙建议
+
+生产 VPS 上应默认拒绝公网访问 Web UI。即使以后通过反向代理访问，也必须先在反向代理层增加认证、访问源限制或 VPN 保护。
+
+如果使用 `ufw`，可以按固定来源 IP 开放 SOCKS5 端口范围：
+
+```bash
+sudo ufw deny 18080/tcp
+sudo ufw allow from <你的固定公网 IP> to any port 18081:18100 proto tcp
+sudo ufw reload
+```
+
+如果只在服务器本机或 SSH 隧道中使用代理，不需要开放 `18081-18100` 到公网。云厂商安全组同样应仅放行 SSH 端口与必要的 SOCKS5 端口范围。
+
+### host 模式
+
+需要频繁动态新增 SOCKS5 端口时，可以使用 host 网络模式（仅 Linux 支持）：
+
+```bash
+docker compose -f docker-compose.host.yml up -d --build
+```
+
+host 模式下 Docker 不再做端口映射，sing-box 监听的端口会直接出现在 VPS 网络命名空间中。
+
+> 🚨 **host 模式默认安全策略**
+>
+> 镜像通过 `SUB2SOCKS5_HOST=127.0.0.1` 环境变量强制 Web UI 只监听 loopback，远程访问必须经 SSH 隧道。若要开放 Web UI 到其他来源，请同时启用 `SUB2SOCKS5_AUTH_TOKEN` 鉴权并配合反向代理 / IP 白名单 / VPN。
+>
+> SOCKS5 端口仍由用户在 Web UI 内按需配置 `0.0.0.0`；防火墙/云厂商安全组必须限定来源 IP。
+
+### 环境变量
+
+镜像支持以下可选环境变量。所有变量均为可选；未设置时使用程序默认值，向后兼容。
+
+| 变量 | 作用 | 默认值 |
+|------|------|--------|
+| `SUB2SOCKS5_ROOT` | 覆盖运行根目录（`internal/{data,runtime,bin}` 的父目录） | 容器启动目录 `/app` |
+| `SUB2SOCKS5_HOST` | 覆盖 Web UI 监听地址 | 配置文件 `app.host`（默认 `0.0.0.0`） |
+| `SUB2SOCKS5_PORT` | 覆盖 Web UI 监听端口 | 配置文件 `app.port`（默认 `18080`） |
+| `SUB2SOCKS5_SING_BOX_BINARY` | 直接指向已有 sing-box 二进制路径 | 配置文件 `app.singBoxBinary` 或 `internal/bin/sing-box` |
+| `SUB2SOCKS5_AUTH_TOKEN` | 启用 Web UI Bearer Token 鉴权 | 未设置时鉴权关闭 |
+| `SUB2SOCKS5_DEPLOYMENT_HINT` | Web UI 顶部部署模式横幅文本（格式 `info\|message` 或 `warning\|message`） | 不显示横幅 |
+| `SUB2SOCKS5_EXTERNAL_HOST` | 导出/复制 SOCKS5 时把监听 `0.0.0.0`/`::` 替换为该地址 | 保留原 `listen` 字段 |
+
+### Web UI 鉴权（可选）
+
+设置 `SUB2SOCKS5_AUTH_TOKEN=<高熵随机字符串>` 后，所有 HTTP 请求必须携带匹配的 Token。支持三种来源（按优先级）：
+
+1. `Authorization: Bearer <token>` 请求头（命令行/客户端工具推荐）。
+2. `sub2socks5_token=<token>` Cookie（浏览器持久化登录态）。
+3. URL 查询参数 `?token=<token>`（仅用于浏览器首次登录，命中后服务器会自动写 Cookie 并 303 重定向去掉 token 参数，避免 referer 泄漏）。
+
+校验失败返回 `401 Unauthorized` 并附带 `WWW-Authenticate: Bearer realm="sub2socks5"`。生成 Token 示例：
+
+```bash
+openssl rand -hex 32
+```
+
+> ⚠️ Token 写入 compose 文件后，请确保该文件不入 Git 公开仓库（建议拆分到 `.env` 并在 compose 中用 `env_file:` 引用）。
+
+### 数据备份
+
+需要备份的目录是 `data`、`runtime`、`bin`。其中 `data` 可能包含订阅 URL、节点配置和访问凭据，备份文件应按敏感数据保存。
+
+```bash
+docker compose down
+tar -czf sub2socks5-backup-$(date +%F).tar.gz data runtime bin
+docker compose up -d
+```
+
+恢复时先停止容器，再解压到同一目录后启动：
+
+```bash
+docker compose down
+tar -xzf sub2socks5-backup-2026-05-18.tar.gz
+docker compose up -d
+```
+
+### FAQ
+
+**Web UI 打不开（连接被拒绝）？**
+
+检查 SSH 隧道是否建立成功。默认 compose 把 `18080` 绑定到宿主机 `127.0.0.1`，必须通过 `ssh -L 18080:127.0.0.1:18080 user@your-vps` 把端口转发到本机后访问。
+
+**bridge 模式下 SOCKS5 端口连不上？**
+
+通常是 Web UI 里的 SOCKS5 监听地址仍是 `127.0.0.1`。在容器 bridge 网络中，监听 `127.0.0.1` 只对容器内部可见，必须改为 `0.0.0.0`，并且端口要落在 `18081-18100` 范围内。
+
+**首次启动后提示找不到 sing-box？**
+
+镜像已内置默认版本，entrypoint 会在 `internal/bin/sing-box` 缺失时自动从 `/opt/sing-box/sing-box` seed 一份。如果仍提示找不到，通常是挂载卷的宿主目录权限不是 `10001:10001`，导致 seed 写入失败 — 重新执行 `sudo chown -R 10001:10001 data runtime bin` 后重启容器即可。也可以在 Web UI 内核管理页下载更新版本覆盖 seed。
+
+**内核下载失败？**
+
+检查容器出站网络是否畅通、是否触发 GitHub release 的 rate limit。可在本机下载对应架构的 sing-box 二进制后，放入挂载目录 `./bin/sing-box` 并赋予可执行权限，重启容器即可生效。
+
+**重启容器后配置丢失？**
+
+检查 `data`、`runtime`、`bin` 三个目录是否都正确挂载到对应路径。compose 文件中三个 volume 缺一不可：业务配置、生成的 sing-box.json、内核二进制分别持久化在这三处。
+
+**能否把 Web UI 直接公开到公网？**
+
+需要同时启用 `SUB2SOCKS5_AUTH_TOKEN` 鉴权并配合反向代理 / IP 白名单 / VPN。即便如此，也建议优先使用 SSH 隧道：Token 写入 compose 后会成为长期凭据，泄漏后 sing-box 控制权将完全转移。
+
 ## 打包方法
 
 当前项目使用 Go 原生构建产出单文件可执行程序，程序逻辑与 `internal/public` 静态资源会一起打包进二进制。

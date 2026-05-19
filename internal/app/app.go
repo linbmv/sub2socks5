@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -53,14 +54,18 @@ func Run() error {
 }
 
 func RunWithStaticFS(staticFS fs.FS) error {
-	cwd, err := os.Getwd()
-	must(err)
+	rootDir := strings.TrimSpace(os.Getenv("SUB2SOCKS5_ROOT"))
+	if rootDir == "" {
+		cwd, err := os.Getwd()
+		must(err)
+		rootDir = cwd
+	}
 	app := &App{
-		rootDir:    cwd,
-		dataDir:    filepath.Join(cwd, "internal", "data"),
-		runtimeDir: filepath.Join(cwd, "internal", "runtime"),
-		binDir:     filepath.Join(cwd, "internal", "bin"),
-		publicDir:  filepath.Join(cwd, "internal", "public"),
+		rootDir:    rootDir,
+		dataDir:    filepath.Join(rootDir, "internal", "data"),
+		runtimeDir: filepath.Join(rootDir, "internal", "runtime"),
+		binDir:     filepath.Join(rootDir, "internal", "bin"),
+		publicDir:  filepath.Join(rootDir, "internal", "public"),
 		staticFS:   staticFS,
 		runtimeInfo: map[string]any{
 			"state":   "stopped",
@@ -109,10 +114,20 @@ func RunWithStaticFS(staticFS fs.FS) error {
 	mux.HandleFunc("/", app.handleStatic)
 
 	host := getString(getMap(app.cfg, "app"), "host", "0.0.0.0")
+	if env := strings.TrimSpace(os.Getenv("SUB2SOCKS5_HOST")); env != "" {
+		host = env
+	}
 	port := getInt(getMap(app.cfg, "app"), "port", 18080)
+	if env := strings.TrimSpace(os.Getenv("SUB2SOCKS5_PORT")); env != "" {
+		n, err := strconv.Atoi(env)
+		if err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("invalid SUB2SOCKS5_PORT: %q", env)
+		}
+		port = n
+	}
 	addr := fmt.Sprintf("%s:%d", host, port)
 	fmt.Printf("Web UI listening on http://%s\n", addr)
-	return http.ListenAndServe(addr, withCORS(mux))
+	return http.ListenAndServe(addr, withAuth(withCORS(mux)))
 }
 
 func (a *App) runSubscriptionAutoUpdateScheduler() {
@@ -395,6 +410,8 @@ func (a *App) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"plannedKernel":      a.plannedKernel,
 			"releaseList":        a.releaseList,
 			"download":           a.downloadState,
+			"deploymentHint":     deploymentHint(),
+			"externalHost":       strings.TrimSpace(os.Getenv("SUB2SOCKS5_EXTERNAL_HOST")),
 		})
 	case http.MethodPost:
 		var body map[string]any
@@ -905,11 +922,14 @@ func (a *App) handleStatic(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) kernelStatus() map[string]any {
-	exe := "sing-box"
-	if runtime.GOOS == "windows" {
-		exe = "sing-box.exe"
+	p := strings.TrimSpace(os.Getenv("SUB2SOCKS5_SING_BOX_BINARY"))
+	if p == "" {
+		exe := "sing-box"
+		if runtime.GOOS == "windows" {
+			exe = "sing-box.exe"
+		}
+		p = filepath.Join(a.binDir, exe)
 	}
-	p := filepath.Join(a.binDir, exe)
 	_, err := os.Stat(p)
 	installed := err == nil
 	var releaseInfo any = nil
@@ -1451,6 +1471,11 @@ func ensureNodesLoaded(cfg, sub map[string]any) error {
 }
 
 func (a *App) resolveSingBoxBinaryPathLocked() (string, error) {
+	if env := strings.TrimSpace(os.Getenv("SUB2SOCKS5_SING_BOX_BINARY")); env != "" {
+		if _, err := os.Stat(env); err == nil {
+			return env, nil
+		}
+	}
 	configured := resolveManagedPath(a.rootDir, getString(getMap(a.cfg, "app"), "singBoxBinary", ""))
 	if configured != "" {
 		if _, err := os.Stat(configured); err == nil {
@@ -2429,6 +2454,75 @@ func findPort(host string, start int) int {
 		}
 	}
 	return start
+}
+
+// deploymentHint 由环境变量提供部署模式提示，供 Web UI 顶部横幅显示。
+// 支持两种格式：纯文本（默认 info 级）或 "level|message"（level 取 info/warning）。
+func deploymentHint() map[string]any {
+	raw := strings.TrimSpace(os.Getenv("SUB2SOCKS5_DEPLOYMENT_HINT"))
+	if raw == "" {
+		return nil
+	}
+	level := "info"
+	message := raw
+	if idx := strings.Index(raw, "|"); idx > 0 {
+		candidate := strings.ToLower(strings.TrimSpace(raw[:idx]))
+		if candidate == "info" || candidate == "warning" {
+			level = candidate
+			message = strings.TrimSpace(raw[idx+1:])
+		}
+	}
+	if message == "" {
+		return nil
+	}
+	return map[string]any{"level": level, "message": message}
+}
+
+func withAuth(next http.Handler) http.Handler {
+	token := strings.TrimSpace(os.Getenv("SUB2SOCKS5_AUTH_TOKEN"))
+	if token == "" {
+		return next
+	}
+	expected := []byte(token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		provided := ""
+		if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+			provided = strings.TrimPrefix(h, "Bearer ")
+		}
+		if provided == "" {
+			if c, err := r.Cookie("sub2socks5_token"); err == nil {
+				provided = c.Value
+			}
+		}
+		if provided == "" {
+			if q := r.URL.Query().Get("token"); q != "" {
+				if subtle.ConstantTimeCompare([]byte(q), expected) == 1 {
+					http.SetCookie(w, &http.Cookie{
+						Name:     "sub2socks5_token",
+						Value:    q,
+						Path:     "/",
+						HttpOnly: true,
+						SameSite: http.SameSiteLaxMode,
+					})
+					qs := r.URL.Query()
+					qs.Del("token")
+					redirect := r.URL.Path
+					if encoded := qs.Encode(); encoded != "" {
+						redirect = redirect + "?" + encoded
+					}
+					http.Redirect(w, r, redirect, http.StatusSeeOther)
+					return
+				}
+				provided = q
+			}
+		}
+		if subtle.ConstantTimeCompare([]byte(provided), expected) != 1 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="sub2socks5"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func withCORS(next http.Handler) http.Handler {

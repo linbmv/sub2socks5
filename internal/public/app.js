@@ -168,8 +168,12 @@ async function load() {
     releaseList: configData.releaseList || [],
     generated: generatedData,
     logs: logsData,
-    download: downloadData
+    download: downloadData,
+    deploymentHint: configData.deploymentHint || null,
+    externalHost: typeof configData.externalHost === 'string' ? configData.externalHost.trim() : ''
   };
+
+  renderDeploymentBanner(latestData.deploymentHint);
 
   const formattedConfig = JSON.stringify(configData.config, null, 2);
   const shouldReplaceEditor = !isEditorDirty() || editor.value.trim() === '' || editor.value === lastSavedConfigText;
@@ -977,9 +981,30 @@ function renderCopySocksTabs() {
 }
 
 function buildSocksAddressList() {
+  const externalHost = latestData?.externalHost || '';
   return formPorts
     .filter((p) => p.listen && p.port)
-    .map((p) => `socks5://${p.listen}:${p.port}`);
+    .map((p) => {
+      const host = externalHost && (p.listen === '0.0.0.0' || p.listen === '::')
+        ? externalHost
+        : p.listen;
+      return `socks5://${host}:${p.port}`;
+    });
+}
+
+function renderDeploymentBanner(hint) {
+  const el = document.getElementById('deployment-banner');
+  if (!el) return;
+  el.classList.remove('level-info', 'level-warning');
+  if (!hint || !hint.message) {
+    el.classList.add('is-hidden');
+    el.textContent = '';
+    return;
+  }
+  const level = hint.level === 'warning' ? 'level-warning' : 'level-info';
+  el.classList.add(level);
+  el.classList.remove('is-hidden');
+  el.textContent = hint.message;
 }
 
 function updateCopySocksPreviews() {
@@ -1561,9 +1586,7 @@ editSocksServiceButton?.addEventListener('click', () => {
 });
 
 exportSocksButton?.addEventListener('click', () => {
-  const lines = formPorts
-    .filter(p => p.listen && p.port)
-    .map(p => `socks5://${p.listen}:${p.port}`);
+  const lines = buildSocksAddressList();
   const json = JSON.stringify(lines, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
