@@ -56,6 +56,32 @@
       <div id="available-node-list" class="node-pill-grid"></div>
     </section>
   </main>
+
+  <div id="bulk-add-overlay" class="overlay is-hidden" aria-hidden="true">
+    <div class="overlay-card">
+      <h3>批量添加成员</h3>
+      <p class="form-note" id="bulk-add-target" style="margin:0 0 12px"></p>
+      <div class="tab-bar" style="margin-bottom:12px;">
+        <button id="bulk-add-mode-keyword" type="button" class="tab-button is-active">关键词包含</button>
+        <button id="bulk-add-mode-regex" type="button" class="tab-button">正则表达式</button>
+      </div>
+      <label style="display:block;margin-bottom:10px;">
+        <span style="display:block;margin-bottom:4px;color:var(--text-muted);font-size:13px;">表达式</span>
+        <input id="bulk-add-pattern" type="text" placeholder="例：香港 或 (HK|香港)" style="width:100%;" />
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;color:var(--text-muted);font-size:13px;">
+        <input id="bulk-add-case-insensitive" type="checkbox" checked />
+        忽略大小写
+      </label>
+      <div id="bulk-add-preview-summary" class="form-note" style="margin:0 0 8px;">输入表达式以预览匹配结果</div>
+      <div id="bulk-add-preview" class="node-pill-grid" style="max-height:240px;overflow-y:auto;"></div>
+      <div class="overlay-actions" style="margin-top:12px;gap:10px;">
+        <button id="bulk-add-replace" type="button">替换成员</button>
+        <button id="bulk-add-append" type="button">追加到现有成员</button>
+        <button id="bulk-add-cancel" type="button" class="danger-icon-button">取消</button>
+      </div>
+    </div>
+  </div>
   <script type="module" src="/nodes.js"></script>
 </body>
 </html>

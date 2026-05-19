@@ -6,6 +6,18 @@ const groupsSectionBodyEl = document.getElementById('groups-section-body');
 const chainsSectionBodyEl = document.getElementById('chains-section-body');
 const toggleGroupsSectionButton = document.getElementById('toggle-groups-section');
 const toggleChainsSectionButton = document.getElementById('toggle-chains-section');
+const bulkAddOverlay = document.getElementById('bulk-add-overlay');
+const bulkAddTargetEl = document.getElementById('bulk-add-target');
+const bulkAddModeKeywordButton = document.getElementById('bulk-add-mode-keyword');
+const bulkAddModeRegexButton = document.getElementById('bulk-add-mode-regex');
+const bulkAddPatternInput = document.getElementById('bulk-add-pattern');
+const bulkAddCaseInput = document.getElementById('bulk-add-case-insensitive');
+const bulkAddPreviewEl = document.getElementById('bulk-add-preview');
+const bulkAddPreviewSummaryEl = document.getElementById('bulk-add-preview-summary');
+const bulkAddReplaceButton = document.getElementById('bulk-add-replace');
+const bulkAddAppendButton = document.getElementById('bulk-add-append');
+const bulkAddCancelButton = document.getElementById('bulk-add-cancel');
+const bulkAddState = { kind: null, index: -1, mode: 'keyword', matchedTags: [] };
 const NODES_UPDATED_KEY = 'sub2socks5:nodes-updated-at';
 const GROUP_TEST_URL_PRESETS = [
   'https://www.gstatic.com/generate_204',
@@ -162,6 +174,7 @@ function buildGroupPanel(index, group, selectableNodes) {
       ${statusHtml}
       <div class="member-selector">${renderGroupMembers(index, group, selectableNodes)}</div>
       <div class="section-heading-actions">
+        <button type="button" data-bulk-add-group="${index}">按关键词/正则批量添加</button>
         <button type="button" data-remove-group="${index}">删除</button>
       </div>
     </div>
@@ -641,9 +654,164 @@ document.addEventListener('click', (event) => {
     renderChains();
   }
 
+  if (target.dataset.bulkAddGroup) {
+    const groupIndex = Number(target.dataset.bulkAddGroup);
+    openBulkAddOverlay('group', groupIndex);
+    return;
+  }
+
   if (target.dataset.checkNode) {
     checkNode(target.dataset.checkNode).catch((error) => setStatus(error.message, 'error'));
   }
+});
+
+function getBulkAddTargetMembers() {
+  if (bulkAddState.kind === 'group') {
+    const group = state.groups?.[bulkAddState.index];
+    return Array.isArray(group?.members) ? group.members : [];
+  }
+  return [];
+}
+
+function setBulkAddTargetMembers(tags) {
+  if (bulkAddState.kind === 'group') {
+    const group = state.groups?.[bulkAddState.index];
+    if (group) group.members = tags;
+  }
+}
+
+function openBulkAddOverlay(kind, index) {
+  bulkAddState.kind = kind;
+  bulkAddState.index = index;
+  bulkAddState.mode = 'keyword';
+  bulkAddState.matchedTags = [];
+  if (bulkAddPatternInput) bulkAddPatternInput.value = '';
+  if (bulkAddCaseInput) bulkAddCaseInput.checked = true;
+  syncBulkAddModeButtons();
+  if (bulkAddTargetEl && kind === 'group') {
+    const group = state.groups?.[index];
+    bulkAddTargetEl.textContent = `目标节点组：${group?.tag || `节点组 ${index + 1}`}（当前 ${(group?.members || []).length} 个成员）`;
+  }
+  bulkAddOverlay?.classList.remove('is-hidden');
+  bulkAddOverlay?.setAttribute('aria-hidden', 'false');
+  renderBulkAddPreview();
+  bulkAddPatternInput?.focus();
+}
+
+function hideBulkAddOverlay() {
+  bulkAddOverlay?.classList.add('is-hidden');
+  bulkAddOverlay?.setAttribute('aria-hidden', 'true');
+  bulkAddState.kind = null;
+  bulkAddState.index = -1;
+  bulkAddState.matchedTags = [];
+}
+
+function syncBulkAddModeButtons() {
+  bulkAddModeKeywordButton?.classList.toggle('is-active', bulkAddState.mode === 'keyword');
+  bulkAddModeRegexButton?.classList.toggle('is-active', bulkAddState.mode === 'regex');
+  if (bulkAddPatternInput) {
+    bulkAddPatternInput.placeholder = bulkAddState.mode === 'regex'
+      ? '例：(HK|香港|Hong\\s*Kong)'
+      : '例：香港 或 HK,新加坡（逗号分隔多个关键词）';
+  }
+}
+
+function computeBulkMatchedTags() {
+  const raw = (bulkAddPatternInput?.value || '').trim();
+  if (!raw) return { tags: [], error: '' };
+  const caseInsensitive = !!bulkAddCaseInput?.checked;
+  const candidates = getSelectableNodesWithoutChains();
+  if (bulkAddState.mode === 'regex') {
+    let regex;
+    try {
+      regex = new RegExp(raw, caseInsensitive ? 'i' : '');
+    } catch (err) {
+      return { tags: [], error: `正则错误：${err.message}` };
+    }
+    const tags = candidates.filter((n) => regex.test(n.tag || '')).map((n) => n.tag);
+    return { tags, error: '' };
+  }
+  const keywords = raw.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+  if (!keywords.length) return { tags: [], error: '' };
+  const tags = candidates.filter((n) => {
+    const tag = caseInsensitive ? (n.tag || '').toLowerCase() : (n.tag || '');
+    return keywords.some((kw) => tag.includes(caseInsensitive ? kw.toLowerCase() : kw));
+  }).map((n) => n.tag);
+  return { tags, error: '' };
+}
+
+function renderBulkAddPreview() {
+  if (!bulkAddPreviewEl || !bulkAddPreviewSummaryEl) return;
+  const { tags, error } = computeBulkMatchedTags();
+  bulkAddState.matchedTags = tags;
+  if (error) {
+    bulkAddPreviewSummaryEl.textContent = error;
+    bulkAddPreviewEl.innerHTML = '';
+    setBulkAddActionsEnabled(false);
+    return;
+  }
+  if (!tags.length) {
+    bulkAddPreviewSummaryEl.textContent = (bulkAddPatternInput?.value || '').trim()
+      ? '没有匹配到节点'
+      : '输入表达式以预览匹配结果';
+    bulkAddPreviewEl.innerHTML = '';
+    setBulkAddActionsEnabled(false);
+    return;
+  }
+  bulkAddPreviewSummaryEl.textContent = `匹配到 ${tags.length} 个节点`;
+  const candidates = getSelectableNodesWithoutChains();
+  const byTag = new Map(candidates.map((n) => [n.tag, n]));
+  bulkAddPreviewEl.innerHTML = tags.map((tag) => {
+    const node = byTag.get(tag);
+    return node ? renderNodePill(node) : '';
+  }).join('');
+  setBulkAddActionsEnabled(true);
+}
+
+function setBulkAddActionsEnabled(enabled) {
+  if (bulkAddReplaceButton) bulkAddReplaceButton.disabled = !enabled;
+  if (bulkAddAppendButton) bulkAddAppendButton.disabled = !enabled;
+}
+
+function applyBulkAdd(mode) {
+  if (!bulkAddState.matchedTags.length) return;
+  const existing = getBulkAddTargetMembers();
+  let next;
+  if (mode === 'replace') {
+    next = [...bulkAddState.matchedTags];
+  } else {
+    const seen = new Set(existing);
+    next = [...existing];
+    for (const tag of bulkAddState.matchedTags) {
+      if (!seen.has(tag)) {
+        seen.add(tag);
+        next.push(tag);
+      }
+    }
+  }
+  setBulkAddTargetMembers(next);
+  setStatus(`已${mode === 'replace' ? '替换' : '追加'} ${bulkAddState.matchedTags.length} 个节点到当前节点组`, 'success');
+  hideBulkAddOverlay();
+  renderGroups();
+}
+
+bulkAddModeKeywordButton?.addEventListener('click', () => {
+  bulkAddState.mode = 'keyword';
+  syncBulkAddModeButtons();
+  renderBulkAddPreview();
+});
+bulkAddModeRegexButton?.addEventListener('click', () => {
+  bulkAddState.mode = 'regex';
+  syncBulkAddModeButtons();
+  renderBulkAddPreview();
+});
+bulkAddPatternInput?.addEventListener('input', () => renderBulkAddPreview());
+bulkAddCaseInput?.addEventListener('change', () => renderBulkAddPreview());
+bulkAddReplaceButton?.addEventListener('click', () => applyBulkAdd('replace'));
+bulkAddAppendButton?.addEventListener('click', () => applyBulkAdd('append'));
+bulkAddCancelButton?.addEventListener('click', () => hideBulkAddOverlay());
+bulkAddOverlay?.addEventListener('click', (event) => {
+  if (event.target === bulkAddOverlay) hideBulkAddOverlay();
 });
 
 load().catch((error) => setStatus(error.message, 'error'));
