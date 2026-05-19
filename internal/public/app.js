@@ -1,4 +1,65 @@
-﻿const editor = document.getElementById('config-editor');
+﻿// ===== Phase B: 抽屉控制 + 运行徽章更新 =====
+const drawer = document.getElementById('drawer');
+const drawerMask = document.getElementById('drawer-mask');
+const drawerClose = document.getElementById('drawer-close');
+const topbarSettings = document.getElementById('topbar-settings');
+const runtimeBadge = document.getElementById('runtime-badge');
+const runtimeBadgeText = document.getElementById('runtime-badge-text');
+const drawerTabs = document.querySelectorAll('.drawer-tab');
+const drawerSections = document.querySelectorAll('.drawer-section');
+
+function openDrawer(tab) {
+  drawer?.classList.add('is-open');
+  drawerMask?.classList.add('is-open');
+  if (tab) switchDrawerTab(tab);
+}
+function closeDrawer() {
+  drawer?.classList.remove('is-open');
+  drawerMask?.classList.remove('is-open');
+}
+function switchDrawerTab(name) {
+  drawerTabs.forEach((btn) => {
+    btn.classList.toggle('is-active', btn.dataset.drawerTab === name);
+  });
+  drawerSections.forEach((sec) => {
+    sec.classList.toggle('is-active', sec.dataset.drawerSection === name);
+  });
+}
+topbarSettings?.addEventListener('click', () => openDrawer('dns'));
+drawerClose?.addEventListener('click', closeDrawer);
+drawerMask?.addEventListener('click', closeDrawer);
+drawerTabs.forEach((btn) => {
+  btn.addEventListener('click', () => switchDrawerTab(btn.dataset.drawerTab));
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && drawer?.classList.contains('is-open')) closeDrawer();
+});
+
+// 运行徽章点击切换启停
+runtimeBadge?.addEventListener('click', () => {
+  const isStopped = runtimeBadge.classList.contains('is-stopped');
+  if (isStopped) {
+    document.getElementById('start')?.click();
+  } else {
+    document.getElementById('stop')?.click();
+  }
+});
+
+// 定时更新运行徽章状态（复用现有 pollRuntimeInfo）
+function updateRuntimeBadge(info) {
+  if (!runtimeBadge || !runtimeBadgeText) return;
+  const running = info?.running === true;
+  const state = info?.state || 'stopped';
+  runtimeBadge.classList.toggle('is-stopped', !running);
+  runtimeBadge.classList.toggle('is-error', state === 'crashed' || state === 'error');
+  if (running) {
+    runtimeBadgeText.textContent = `sing-box · 运行中`;
+  } else {
+    runtimeBadgeText.textContent = `sing-box · 已停止`;
+  }
+}
+
+const editor = document.getElementById('config-editor');
 const nodesEl = document.getElementById('nodes');
 
 const generatedEl = document.getElementById('generated');
@@ -2100,6 +2161,7 @@ setInterval(() => {
       } else if (!statusBar.classList.contains('is-error')) {
         setStatus('准备就绪', 'idle');
       }
+      updateRuntimeBadge(latestData.runtime);
     })
     .catch(() => {});
 }, 2000);
