@@ -1,0 +1,7 @@
+# Shell 脚本与 Docker 相关文件强制使用 LF，避免 Windows 上 CRLF 导致容器内执行失败。
+*.sh text eol=lf
+Dockerfile text eol=lf
+.dockerignore text eol=lf
+docker-compose*.yml text eol=lf
+.github/workflows/*.yml text eol=lf
+scripts/* text eol=lf

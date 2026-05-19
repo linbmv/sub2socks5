@@ -1,0 +1,29 @@
+services:
+  sub2socks5:
+    # 默认本地构建。若已发布到 GHCR，可注释 build 段并改用：
+    #   image: ghcr.io/sglinhome/sub2socks5:latest
+    build:
+      context: .
+    image: sub2socks5:local
+    container_name: sub2socks5
+    restart: unless-stopped
+    # init 用于回收 sing-box 子进程，避免僵尸进程。
+    init: true
+    environment:
+      TZ: Asia/Shanghai
+      # 可选：在 Web UI 顶部显示部署模式横幅。格式 "level|message"，level 取 info/warning。
+      # SUB2SOCKS5_DEPLOYMENT_HINT: "info|当前为 Docker bridge 部署，SOCKS5 监听必须使用 0.0.0.0。"
+      # 可选：启用 Web UI Bearer Token 鉴权（详见 README）。
+      # SUB2SOCKS5_AUTH_TOKEN: "请替换为高熵随机字符串"
+      # 可选：导出 SOCKS5 时把监听 0.0.0.0 替换为外部地址（如 SSH 隧道目标或公网域名）。
+      # SUB2SOCKS5_EXTERNAL_HOST: "127.0.0.1"
+    ports:
+      # Web UI 无内置鉴权且 CORS 宽松，仅绑定到宿主机 loopback。
+      - "127.0.0.1:18080:18080"
+      # bridge 模式下，Web UI 中 SOCKS5 服务的监听地址必须改为 0.0.0.0，端口必须在 18081-18100 范围内。
+      - "127.0.0.1:18081-18100:18081-18100"
+    volumes:
+      - ./data:/app/internal/data
+      - ./runtime:/app/internal/runtime
+      # 阶段二镜像已内置 sing-box，entrypoint 会在 bin 目录为空时 seed 默认版本。
+      - ./bin:/app/internal/bin

@@ -1,0 +1,25 @@
+# 保留 internal/public/ 进入构建上下文，embed 需要它。
+.git
+.github
+.claude
+dist/
+# 项目内置持久化路径
+internal/data/
+internal/runtime/
+internal/bin/
+# compose 默认 bind mount 落在根目录的持久化路径，二次构建时必须排除以防订阅凭据进入 build context
+data/
+runtime/
+bin/
+# 本地敏感配置和上下文
+.env
+.env.*
+.codex/
+.context/
+*.exe
+*.db
+*.zip
+.DS_Store
+README.md
+background.md
+LICENSE

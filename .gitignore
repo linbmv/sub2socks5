@@ -5,3 +5,4 @@ dist
 internal/data/
 internal/runtime/
 internal/bin
+.claude/
