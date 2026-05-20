@@ -7,8 +7,9 @@ ARG SING_BOX_VERSION=1.11.4
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS builder
 WORKDIR /src
 
-COPY go.mod ./
-COPY . .
+COPY go.mod go.sum* ./
+COPY main.go ./
+COPY internal/ ./internal/
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -57,6 +58,8 @@ RUN mkdir -p /app/internal/data /app/internal/runtime /app/internal/bin \
 COPY --from=builder --chown=sub2socks5:sub2socks5 /out/sub2socks5 /app/sub2socks5
 COPY --from=kernel /opt/sing-box/sing-box /opt/sing-box/sing-box
 COPY --chmod=0755 scripts/entrypoint.sh /entrypoint.sh
+
+ENV SING_BOX_VERSION=${SING_BOX_VERSION}
 
 LABEL org.opencontainers.image.title="sub2socks5" \
       org.opencontainers.image.description="基于 Go + sing-box 的本地代理管理器" \
