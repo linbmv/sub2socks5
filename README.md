@@ -417,18 +417,12 @@ docker compose logs -f sub2socks5
 | 模式 | 关键变量 | 访问方式 |
 |---|---|---|
 | **A 仅本机** | 全部默认 | `http://127.0.0.1:18080` |
-| **B LAN 共享** | `WEBUI_BIND=0.0.0.0` + `USERNAME` + `PASSWORD` | `http://<lan-ip>:18080` |
-| **C CF Tunnel（自起）** | `USERNAME` + `PASSWORD` + `CF_TUNNEL_TOKEN` | `https://<回源域名>` |
-| **D CF Tunnel（外部）** | `USERNAME` + `PASSWORD` + `EXTERNAL_NETWORK=<网络名>` | `https://<回源域名>` |
+| **B LAN / 公网直连** | `WEBUI_BIND=0.0.0.0` + `USERNAME` + `PASSWORD` | `http://<lan-ip-或域名>:18080` |
 
 启动命令：
 
 ```bash
-# A / B / D 直接启动
 docker compose up -d --build
-
-# C 自起 cloudflared 容器（需启用 cf-tunnel profile）
-docker compose --profile cf-tunnel up -d --build
 ```
 
 ### 首次配置
@@ -457,42 +451,13 @@ curl --socks5-hostname 127.0.0.1:18081 https://www.google.com/generate_204 -I
 curl --proxy socks5://user:pass@your-vps.example.com:18081 https://ifconfig.me
 ```
 
-### CF Tunnel 模式说明
-
-#### 模式 C：本仓库自起 `cloudflared` 容器
-
-1. [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) → **Networks → Tunnels → Create a tunnel**
-2. 选 Docker，复制弹出的 token (`eyJhIjoi...`) 填入 `.env` 的 `CF_TUNNEL_TOKEN`
-3. Tunnel **Public Hostname** 添加：
-   - Subdomain：任意（例如 `sub2socks5`）
-   - Domain：你的域名
-   - Service Type：`HTTP`
-   - URL：`sub2socks5:18080`
-4. `.env` 同时填好 `SUB2SOCKS5_USERNAME`（留空默认 admin）+ `SUB2SOCKS5_PASSWORD`
-5. `docker compose --profile cf-tunnel up -d --build`
-
-#### 模式 D：复用已有外部 `cloudflared` 容器
-
-适合你已经在跑独立的 `cloudflared`（多个项目共享）的场景。
-
-1. `docker network ls` 找到 cloudflared 所在的 docker network 名
-2. `.env` 设 `EXTERNAL_NETWORK=<网络名>`（不要设 `CF_TUNNEL_TOKEN`，避免重复起 cloudflared）
-3. 在已有 Tunnel 的 **Public Hostname** 添加 URL：`http://sub2socks5:18080`
-4. `.env` 填好 `SUB2SOCKS5_USERNAME`（留空默认 admin）+ `SUB2SOCKS5_PASSWORD`
-5. `docker compose up -d --build`
-
-> 🛡️ **CF Tunnel 模式的安全模型**
->
-> - Web UI 经 CF 反代，VPS 不开放 18080 端口；CF 自动注入 `X-Forwarded-Proto=https`，cookie `Secure` 标志自动启用
-> - SOCKS5 直连 VPS（CF Tunnel 免费版不支持 TCP）；**必须** 给每个端口配 `username/password`
-> - 建议 VPS 防火墙限制 SOCKS5 端口来源 IP
-
 ### 防火墙建议
 
-生产 VPS 默认拒绝公网访问 Web UI（CF Tunnel 模式不需要在 VPS 开 18080）：
+生产 VPS 建议限制公网访问 Web UI（仅信任 IP 可达），SOCKS5 端口同理：
 
 ```bash
-sudo ufw deny 18080/tcp
+sudo ufw deny 18080/tcp                                    # Web UI 默认拒公网，按需放行可信 IP
+sudo ufw allow from <可信 IP> to any port 18080 proto tcp
 sudo ufw allow from <可信 IP> to any port 18081:18100 proto tcp
 sudo ufw reload
 ```
@@ -511,8 +476,6 @@ sudo ufw reload
 | `SUB2SOCKS5_EXTERNAL_HOST` | 复制 SOCKS5 时把 `0.0.0.0`/`::` 替换为该地址 | 保留原 `listen` |
 | `WEBUI_BIND` | compose 中 Web UI 端口绑定接口 | `127.0.0.1` |
 | `SOCKS5_BIND` | compose 中 SOCKS5 端口绑定接口 | `0.0.0.0` |
-| `CF_TUNNEL_TOKEN` | CF Tunnel 模式 C 用，自起 cloudflared | 空 |
-| `EXTERNAL_NETWORK` | CF Tunnel 模式 D 用，加入外部 docker network | `sub2socks5_default` |
 
 ### Web UI 鉴权（可选）
 

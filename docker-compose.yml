@@ -1,21 +1,17 @@
-# sub2socks5 部署 - 单文件支持 4 种模式
+# sub2socks5 部署 - 单文件支持本机 / LAN 共享两种模式
 #
 # 用法：复制 .env.example 为 .env，按场景填值后执行
 #   docker compose up -d --build
 #
 # 部署模式（由 .env 控制）：
 #
-#   ┌────────────────┬──────────────────────────────┬──────────────────────────────────┐
-#   │ 模式           │ .env 关键变量                 │ 访问方式                          │
-#   ├────────────────┼──────────────────────────────┼──────────────────────────────────┤
-#   │ 本机           │ 全部默认                      │ http://127.0.0.1:18080            │
-#   │ LAN 共享       │ USERNAME + PASSWORD          │ http://<lan-ip>:18080             │
-#   │                │ + WEBUI_BIND=0.0.0.0         │                                   │
-#   │ CF Tunnel      │ USERNAME + PASSWORD          │ https://<your-domain>             │
-#   │ (本仓库自起)   │ + CF_TUNNEL_TOKEN            │ （sub2socks5 容器名: sub2socks5） │
-#   │ CF Tunnel      │ USERNAME + PASSWORD          │ 由你的 cloudflared 反代           │
-#   │ (外部 cf 容器) │ + EXTERNAL_NETWORK=<网络名>  │ Public Hostname URL=sub2socks5:18080 │
-#   └────────────────┴──────────────────────────────┴──────────────────────────────────┘
+#   ┌────────────────┬──────────────────────────────┬───────────────────────────┐
+#   │ 模式           │ .env 关键变量                 │ 访问方式                   │
+#   ├────────────────┼──────────────────────────────┼───────────────────────────┤
+#   │ 本机           │ 全部默认                      │ http://127.0.0.1:18080     │
+#   │ LAN / 公网直连 │ WEBUI_BIND=0.0.0.0           │ http://<lan-ip>:18080      │
+#   │                │ + USERNAME + PASSWORD        │                            │
+#   └────────────────┴──────────────────────────────┴───────────────────────────┘
 #
 # 详细参考 README "Docker 部署" 章节。
 
@@ -45,7 +41,7 @@ services:
       SUB2SOCKS5_DEPLOYMENT_HINT: ${SUB2SOCKS5_DEPLOYMENT_HINT:-}
     ports:
       # Web UI 端口。
-      # WEBUI_BIND=127.0.0.1（默认）→ 仅本机访问；CF Tunnel 同 docker network 也走得通。
+      # WEBUI_BIND=127.0.0.1（默认）→ 仅本机访问。
       # WEBUI_BIND=0.0.0.0          → LAN/公网直连（务必先设 USERNAME+PASSWORD）。
       - "${WEBUI_BIND:-127.0.0.1}:18080:18080"
       # SOCKS5 端口范围。开放外部使用前请在 Web UI 给每个端口配 username/password 用户。
@@ -55,31 +51,3 @@ services:
       - ./runtime:/app/internal/runtime
       # 镜像已内置 sing-box，entrypoint 会在 bin 目录为空时 seed 默认版本。
       - ./bin:/app/internal/bin
-    networks:
-      - default
-      # 加入外部已存在的 docker network（当 EXTERNAL_NETWORK 设值时生效）。
-      # 用于已有独立 cloudflared 容器的场景：把 sub2socks5 加进 cf 所在的 bridge 网络，
-      # 然后 CF Tunnel Public Hostname URL 填 http://sub2socks5:18080。
-      - external
-
-  # 自起 cloudflared 容器（仅在 .env 设置 CF_TUNNEL_TOKEN 时启动）。
-  # 已有外部 cloudflared 容器时不要设 CF_TUNNEL_TOKEN，改用 EXTERNAL_NETWORK 即可。
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    container_name: sub2socks5-cloudflared
-    restart: unless-stopped
-    command: tunnel --no-autoupdate run
-    profiles: ["cf-tunnel"]
-    environment:
-      TUNNEL_TOKEN: ${CF_TUNNEL_TOKEN:-}
-    depends_on:
-      - sub2socks5
-    networks:
-      - default
-
-networks:
-  default:
-    driver: bridge
-  external:
-    name: ${EXTERNAL_NETWORK:-sub2socks5_default}
-    external: true
