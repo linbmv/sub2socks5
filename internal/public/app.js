@@ -1667,21 +1667,21 @@ document.getElementById('refresh-sub').onclick = () => action('更新订阅', as
   await runSubscriptionRefreshFlow();
 });
 
-document.getElementById('start').onclick = () => action('启动 sing-box', async () => {
+document.getElementById('start')?.addEventListener('click', () => action('启动 sing-box', async () => {
   await post('/api/runtime/start');
-});
+}));
 
-document.getElementById('stop').onclick = () => action('停止 sing-box', async () => {
+document.getElementById('stop')?.addEventListener('click', () => action('停止 sing-box', async () => {
   await post('/api/runtime/stop');
-});
+}));
 
-document.getElementById('kernel-architecture-detect').onclick = () => action('检测当前架构', async () => {
+document.getElementById('kernel-architecture-detect')?.addEventListener('click', () => action('检测当前架构', async () => {
   await detectArchitectureAndLoadReleases();
-});
+}));
 
-document.getElementById('kernel-check').onclick = () => action('检查内核版本', async () => {
+document.getElementById('kernel-check')?.addEventListener('click', () => action('检查内核版本', async () => {
   await Promise.all([api('/api/kernel/status'), api('/api/kernel/releases')]);
-});
+}));
 
 kernelCheckUpdatesButton.onclick = () => action('检查版本更新', async () => {
   await post('/api/kernel/releases/update');
