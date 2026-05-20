@@ -54,7 +54,8 @@ type App struct {
 	autoUpdateLastRun   map[string]time.Time
 	sessions            map[string]time.Time
 	loginAttempts       map[string][]time.Time
-	tokenHash           []byte
+	userHash            []byte
+	passHash            []byte
 }
 
 func Run() error {
@@ -87,10 +88,16 @@ func RunWithStaticFS(staticFS fs.FS) error {
 		sessions:          map[string]time.Time{},
 		loginAttempts:     map[string][]time.Time{},
 	}
-	token := strings.TrimSpace(os.Getenv("SUB2SOCKS5_AUTH_TOKEN"))
-	if token != "" {
-		h := sha256.Sum256([]byte(token))
-		app.tokenHash = h[:]
+	pass := os.Getenv("SUB2SOCKS5_PASSWORD")
+	if strings.TrimSpace(pass) != "" {
+		user := os.Getenv("SUB2SOCKS5_USERNAME")
+		if strings.TrimSpace(user) == "" {
+			user = "admin"
+		}
+		uh := sha256.Sum256([]byte(user))
+		ph := sha256.Sum256([]byte(pass))
+		app.userHash = uh[:]
+		app.passHash = ph[:]
 	}
 	must(os.MkdirAll(app.dataDir, 0o755))
 	must(os.MkdirAll(app.runtimeDir, 0o755))
@@ -487,7 +494,7 @@ func (a *App) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"download":           a.downloadState,
 			"deploymentHint":     deploymentHint(),
 			"externalHost":       strings.TrimSpace(os.Getenv("SUB2SOCKS5_EXTERNAL_HOST")),
-			"authEnabled":        strings.TrimSpace(os.Getenv("SUB2SOCKS5_AUTH_TOKEN")) != "",
+			"authEnabled":        strings.TrimSpace(os.Getenv("SUB2SOCKS5_PASSWORD")) != "",
 		})
 	case http.MethodPost:
 		var body map[string]any
@@ -2980,7 +2987,7 @@ func (a *App) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authEnabled := strings.TrimSpace(os.Getenv("SUB2SOCKS5_AUTH_TOKEN")) != ""
+		authEnabled := strings.TrimSpace(os.Getenv("SUB2SOCKS5_PASSWORD")) != ""
 
 		// Host 校验：仅在鉴权启用时执行（防 DNS rebinding 升权）。
 		// 未启用鉴权时本来就没有"权限边界"可被攻破，强制 Host 校验只会让 LAN 访问失败。

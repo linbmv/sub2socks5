@@ -417,9 +417,9 @@ docker compose logs -f sub2socks5
 | 模式 | 关键变量 | 访问方式 |
 |---|---|---|
 | **A 仅本机** | 全部默认 | `http://127.0.0.1:18080` |
-| **B LAN 共享** | `WEBUI_BIND=0.0.0.0` + `AUTH_TOKEN` + `ALLOWED_HOSTS=<lan-ip>` | `http://<lan-ip>:18080` |
-| **C CF Tunnel（自起）** | `AUTH_TOKEN` + `ALLOWED_HOSTS=<回源域名>` + `CF_TUNNEL_TOKEN` | `https://<回源域名>` |
-| **D CF Tunnel（外部）** | `AUTH_TOKEN` + `ALLOWED_HOSTS=<回源域名>` + `EXTERNAL_NETWORK=<网络名>` | `https://<回源域名>` |
+| **B LAN 共享** | `WEBUI_BIND=0.0.0.0` + `USERNAME` + `PASSWORD` + `ALLOWED_HOSTS=<lan-ip>` | `http://<lan-ip>:18080` |
+| **C CF Tunnel（自起）** | `USERNAME` + `PASSWORD` + `ALLOWED_HOSTS=<回源域名>` + `CF_TUNNEL_TOKEN` | `https://<回源域名>` |
+| **D CF Tunnel（外部）** | `USERNAME` + `PASSWORD` + `ALLOWED_HOSTS=<回源域名>` + `EXTERNAL_NETWORK=<网络名>` | `https://<回源域名>` |
 
 启动命令：
 
@@ -468,7 +468,7 @@ curl --proxy socks5://user:pass@your-vps.example.com:18081 https://ifconfig.me
    - Domain：你的域名
    - Service Type：`HTTP`
    - URL：`sub2socks5:18080`
-4. `.env` 同时填好 `SUB2SOCKS5_AUTH_TOKEN` + `SUB2SOCKS5_ALLOWED_HOSTS=<回源域名>`
+4. `.env` 同时填好 `SUB2SOCKS5_USERNAME`（留空默认 admin）+ `SUB2SOCKS5_PASSWORD` + `SUB2SOCKS5_ALLOWED_HOSTS=<回源域名>`
 5. `docker compose --profile cf-tunnel up -d --build`
 
 #### 模式 D：复用已有外部 `cloudflared` 容器
@@ -478,7 +478,7 @@ curl --proxy socks5://user:pass@your-vps.example.com:18081 https://ifconfig.me
 1. `docker network ls` 找到 cloudflared 所在的 docker network 名
 2. `.env` 设 `EXTERNAL_NETWORK=<网络名>`（不要设 `CF_TUNNEL_TOKEN`，避免重复起 cloudflared）
 3. 在已有 Tunnel 的 **Public Hostname** 添加 URL：`http://sub2socks5:18080`
-4. `.env` 填好 `SUB2SOCKS5_AUTH_TOKEN` + `SUB2SOCKS5_ALLOWED_HOSTS=<回源域名>`
+4. `.env` 填好 `SUB2SOCKS5_USERNAME`（留空默认 admin）+ `SUB2SOCKS5_PASSWORD` + `SUB2SOCKS5_ALLOWED_HOSTS=<回源域名>`
 5. `docker compose up -d --build`
 
 > 🛡️ **CF Tunnel 模式的安全模型**
@@ -505,7 +505,8 @@ sudo ufw reload
 | `SUB2SOCKS5_HOST` | Web UI 监听地址 | 配置文件 `app.host`（默认 `127.0.0.1`） |
 | `SUB2SOCKS5_PORT` | Web UI 监听端口 | 配置文件 `app.port`（默认 `18080`） |
 | `SUB2SOCKS5_SING_BOX_BINARY` | 指向已有 sing-box 二进制 | 配置文件 `app.singBoxBinary` |
-| `SUB2SOCKS5_AUTH_TOKEN` | 启用 Web UI 鉴权（公网部署必填） | 未设置时鉴权关闭 |
+| `SUB2SOCKS5_USERNAME` | Web UI 登录用户名（留空默认 `admin`，仅 `PASSWORD` 设置时生效） | `admin` |
+| `SUB2SOCKS5_PASSWORD` | Web UI 登录密码，**设置后即启用鉴权**（公网部署必填） | 未设置时鉴权关闭 |
 | `SUB2SOCKS5_ALLOWED_HOSTS` | 鉴权启用时的 Host 头白名单（防 DNS rebinding），逗号分隔 | `localhost,127.0.0.1,::1` |
 | `SUB2SOCKS5_DEPLOYMENT_HINT` | Web UI 顶部部署横幅（`level\|message`） | 不显示 |
 | `SUB2SOCKS5_EXTERNAL_HOST` | 复制 SOCKS5 时把 `0.0.0.0`/`::` 替换为该地址 | 保留原 `listen` |
@@ -516,19 +517,22 @@ sudo ufw reload
 
 ### Web UI 鉴权（可选）
 
-设置 `SUB2SOCKS5_AUTH_TOKEN=<高熵随机字符串>` 后，所有 HTTP 请求必须携带匹配的 Token。支持三种来源（按优先级）：
+设置 `SUB2SOCKS5_USERNAME`（留空默认 `admin`）+ `SUB2SOCKS5_PASSWORD=<高熵随机字符串>` 后启用用户名/密码登录。访问受保护页面前会自动跳转 `/login`，提交凭据后服务器签发 24 小时有效的 `sub2socks5_session` Cookie。
 
-1. `Authorization: Bearer <token>` 请求头（命令行/客户端工具推荐）。
-2. `sub2socks5_token=<token>` Cookie（浏览器持久化登录态）。
-3. URL 查询参数 `?token=<token>`（仅用于浏览器首次登录，命中后服务器会自动写 Cookie 并 303 重定向去掉 token 参数，避免 referer 泄漏）。
+- 登录接口：`POST /api/auth/login`，body 为 `{"username":"...","password":"..."}`
+- 失败响应 `401`；同 IP 一分钟内超过 5 次失败返回 `429`
+- 会话状态查询：`GET /api/auth/status` 返回 `{enabled, authenticated}`
+- 登出：`POST /api/auth/logout` 清除会话和 Cookie
 
-校验失败返回 `401 Unauthorized` 并附带 `WWW-Authenticate: Bearer realm="sub2socks5"`。生成 Token 示例：
+命令行/客户端工具可在浏览器登录后从 DevTools 复制 `sub2socks5_session` Cookie 值，再以 `Authorization: Bearer <sessionID>` 方式调用 API。校验失败返回 `401` 并附带 `WWW-Authenticate: Bearer realm="sub2socks5"`。
+
+生成强密码示例：
 
 ```bash
-openssl rand -hex 32
+openssl rand -base64 24
 ```
 
-> ⚠️ Token 写入 compose 文件后，请确保该文件不入 Git 公开仓库（建议拆分到 `.env` 并在 compose 中用 `env_file:` 引用）。
+> ⚠️ 密码写入 compose 文件后，请确保该文件不入 Git 公开仓库（建议拆分到 `.env` 并在 compose 中用 `env_file:` 引用）。
 
 ### 数据备份
 
@@ -572,7 +576,7 @@ docker compose up -d
 
 **能否把 Web UI 直接公开到公网？**
 
-需要同时启用 `SUB2SOCKS5_AUTH_TOKEN` 鉴权并配合反向代理 / IP 白名单 / VPN。即便如此，也建议优先使用 SSH 隧道：Token 写入 compose 后会成为长期凭据，泄漏后 sing-box 控制权将完全转移。
+需要同时启用 `SUB2SOCKS5_USERNAME` + `SUB2SOCKS5_PASSWORD` 鉴权并配合反向代理 / IP 白名单 / VPN。即便如此，也建议优先使用 SSH 隧道：密码写入 compose 后会成为长期凭据，泄漏后 sing-box 控制权将完全转移。
 
 ## 打包方法
 

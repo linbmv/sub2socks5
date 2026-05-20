@@ -1,5 +1,6 @@
 const form = document.getElementById('login-form');
-const tokenInput = document.getElementById('login-token');
+const usernameInput = document.getElementById('login-username');
+const passwordInput = document.getElementById('login-password');
 const errorEl = document.getElementById('login-error');
 const submitBtn = document.getElementById('login-submit');
 
@@ -18,7 +19,6 @@ function getNextUrl() {
   const params = new URLSearchParams(window.location.search);
   const next = params.get('next');
   if (!next) return '/';
-  // 必须是绝对路径（单 /），禁止协议相对（//）、反斜杠、跳回 login 自身
   if (!next.startsWith('/')) return '/';
   if (next.startsWith('//')) return '/';
   if (next.includes('\\')) return '/';
@@ -29,9 +29,16 @@ function getNextUrl() {
 form?.addEventListener('submit', async (event) => {
   event.preventDefault();
   hideError();
-  const token = (tokenInput?.value || '').trim();
-  if (!token) {
-    showError('请输入 Token');
+  const username = (usernameInput?.value || '').trim();
+  const password = passwordInput?.value || '';
+  if (!username) {
+    showError('请输入用户名');
+    usernameInput?.focus();
+    return;
+  }
+  if (!password) {
+    showError('请输入密码');
+    passwordInput?.focus();
     return;
   }
   if (submitBtn) submitBtn.disabled = true;
@@ -39,7 +46,7 @@ form?.addEventListener('submit', async (event) => {
     const response = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token })
+      body: JSON.stringify({ username, password })
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.authenticated) {
@@ -49,12 +56,11 @@ form?.addEventListener('submit', async (event) => {
   } catch (err) {
     showError(err.message || '登录失败');
     if (submitBtn) submitBtn.disabled = false;
-    tokenInput?.focus();
-    tokenInput?.select();
+    passwordInput?.focus();
+    passwordInput?.select();
   }
 });
 
-// 已登录直接跳走
 fetch('/api/auth/status')
   .then((r) => r.json())
   .then((d) => {
@@ -64,4 +70,4 @@ fetch('/api/auth/status')
   })
   .catch(() => {});
 
-tokenInput?.focus();
+usernameInput?.focus();

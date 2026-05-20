@@ -11,16 +11,20 @@
   <main class="login-shell">
     <div class="login-card">
       <h1 class="login-title">sub2socks5</h1>
-      <p class="login-sub">请输入访问 Token</p>
-      <form id="login-form" autocomplete="off">
+      <p class="login-sub">请输入用户名和密码</p>
+      <form id="login-form" autocomplete="on">
         <label class="login-field">
-          <span>Token</span>
-          <input id="login-token" type="password" autocomplete="current-password" placeholder="SUB2SOCKS5_AUTH_TOKEN 环境变量值" required />
+          <span>用户名</span>
+          <input id="login-username" type="text" autocomplete="username" placeholder="SUB2SOCKS5_USERNAME（默认 admin）" required />
+        </label>
+        <label class="login-field">
+          <span>密码</span>
+          <input id="login-password" type="password" autocomplete="current-password" placeholder="SUB2SOCKS5_PASSWORD 环境变量值" required />
         </label>
         <div id="login-error" class="login-error is-hidden"></div>
         <button id="login-submit" type="submit">登录</button>
       </form>
-      <p class="login-tip">Token 由部署方在 compose 的 <code>SUB2SOCKS5_AUTH_TOKEN</code> 环境变量配置。忘记 Token 请联系管理员。</p>
+      <p class="login-tip">用户名 / 密码由部署方在 compose 的 <code>SUB2SOCKS5_USERNAME</code> 和 <code>SUB2SOCKS5_PASSWORD</code> 环境变量配置。忘记凭据请联系管理员。</p>
     </div>
   </main>
   <script type="module" src="/login.js"></script>

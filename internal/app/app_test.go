@@ -74,7 +74,8 @@ func TestSessionManagement(t *testing.T) {
 	app := &App{
 		sessions:      map[string]time.Time{},
 		loginAttempts: map[string][]time.Time{},
-		tokenHash:     sha256.New().Sum([]byte("test-token")),
+		userHash:      sha256.New().Sum([]byte("admin")),
+		passHash:      sha256.New().Sum([]byte("test-password")),
 	}
 	sessionID := generateSessionID()
 	app.sessions[sessionID] = time.Now()

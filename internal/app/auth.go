@@ -13,9 +13,9 @@ import (
 )
 
 // withAuth 是 HTTP 中间件，校验请求附带的会话 ID。
-// 仅在 SUB2SOCKS5_AUTH_TOKEN 已配置时生效，否则直通。
+// 仅在 SUB2SOCKS5_PASSWORD 已配置时生效，否则直通。
 func (a *App) withAuth(next http.Handler) http.Handler {
-	if len(a.tokenHash) == 0 {
+	if len(a.passHash) == 0 {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +110,7 @@ func (a *App) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, "GET")
 		return
 	}
-	enabled := len(a.tokenHash) > 0
+	enabled := len(a.passHash) > 0
 	authed := false
 	if enabled {
 		sessionID := ""
@@ -130,13 +130,13 @@ func (a *App) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	ok(w, map[string]any{"enabled": enabled, "authenticated": authed || !enabled})
 }
 
-// handleAuthLogin 处理登录请求：速率限制 + sha256 等长比对 + 生成会话。
+// handleAuthLogin 处理登录请求：速率限制 + sha256 等长比对用户名/密码 + 生成会话。
 func (a *App) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w, "POST")
 		return
 	}
-	if len(a.tokenHash) == 0 {
+	if len(a.passHash) == 0 {
 		fail(w, http.StatusBadRequest, "鉴权未启用")
 		return
 	}
@@ -163,15 +163,19 @@ func (a *App) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	a.mu.Unlock()
 
 	var body struct {
-		Token string `json:"token"`
+		Username string `json:"username"`
+		Password string `json:"password"`
 	}
 	if err := decodeJSON(r.Body, &body); err != nil {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	providedHash := sha256.Sum256([]byte(body.Token))
-	if subtle.ConstantTimeCompare(providedHash[:], a.tokenHash) != 1 {
-		fail(w, http.StatusUnauthorized, "Token 错误")
+	userHash := sha256.Sum256([]byte(body.Username))
+	passHash := sha256.Sum256([]byte(body.Password))
+	userOK := subtle.ConstantTimeCompare(userHash[:], a.userHash) == 1
+	passOK := subtle.ConstantTimeCompare(passHash[:], a.passHash) == 1
+	if !(userOK && passOK) {
+		fail(w, http.StatusUnauthorized, "用户名或密码错误")
 		return
 	}
 	sessionID := generateSessionID()
