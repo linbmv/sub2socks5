@@ -17,7 +17,12 @@ function hideError() {
 function getNextUrl() {
   const params = new URLSearchParams(window.location.search);
   const next = params.get('next');
-  if (!next || !next.startsWith('/') || next.startsWith('//')) return '/';
+  if (!next) return '/';
+  // 必须是绝对路径（单 /），禁止协议相对（//）、反斜杠、跳回 login 自身
+  if (!next.startsWith('/')) return '/';
+  if (next.startsWith('//')) return '/';
+  if (next.includes('\\')) return '/';
+  if (next === '/login' || next.startsWith('/login?') || next === '/login.html') return '/';
   return next;
 }
 

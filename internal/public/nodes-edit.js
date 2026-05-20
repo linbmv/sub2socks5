@@ -1,3 +1,5 @@
+import { escapeHtml, escapeHtmlAttr, setStatus as setStatusEl } from '/shared.js';
+
 const statusEl = document.getElementById('edit-node-status');
 const inputEl = document.getElementById('edit-manual-node-input');
 const importResultEl = document.getElementById('edit-manual-import-result');
@@ -241,21 +243,7 @@ function buildFormNode() {
 }
 
 function setStatus(message, kind = 'idle') {
-  statusEl.textContent = message;
-  statusEl.className = `status-bar is-${kind}`;
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-function escapeHtmlAttr(value) {
-  return escapeHtml(value);
+  setStatusEl(statusEl, message, kind);
 }
 
 document.getElementById('back-nodes').addEventListener('click', () => {

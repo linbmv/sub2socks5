@@ -1,4 +1,30 @@
 ﻿// ===== Phase B: 抽屉控制 + 运行徽章更新 =====
+import { trapFocus } from '/shared.js';
+
+// 全局 overlay focus trap 管理：监听所有 .overlay 的 is-hidden 类切换。
+const overlayFocusReleases = new WeakMap();
+function watchOverlayFocus(overlay) {
+  if (!overlay) return;
+  const observer = new MutationObserver(() => {
+    const isHidden = overlay.classList.contains('is-hidden');
+    const release = overlayFocusReleases.get(overlay);
+    if (isHidden) {
+      overlay.setAttribute('aria-hidden', 'true');
+      if (release) {
+        release();
+        overlayFocusReleases.delete(overlay);
+      }
+    } else {
+      overlay.setAttribute('aria-hidden', 'false');
+      if (!release) {
+        overlayFocusReleases.set(overlay, trapFocus(overlay));
+      }
+    }
+  });
+  observer.observe(overlay, { attributes: true, attributeFilter: ['class'] });
+}
+document.querySelectorAll('.overlay').forEach(watchOverlayFocus);
+
 const drawer = document.getElementById('drawer');
 const drawerMask = document.getElementById('drawer-mask');
 const drawerClose = document.getElementById('drawer-close');
@@ -8,14 +34,24 @@ const runtimeBadgeText = document.getElementById('runtime-badge-text');
 const drawerTabs = document.querySelectorAll('.drawer-tab');
 const drawerSections = document.querySelectorAll('.drawer-section');
 
+let drawerFocusRelease = null;
+
 function openDrawer(tab) {
   drawer?.classList.add('is-open');
   drawerMask?.classList.add('is-open');
   if (tab) switchDrawerTab(tab);
+  if (drawer) {
+    drawer.setAttribute('aria-hidden', 'false');
+    drawerFocusRelease?.();
+    drawerFocusRelease = trapFocus(drawer);
+  }
 }
 function closeDrawer() {
   drawer?.classList.remove('is-open');
   drawerMask?.classList.remove('is-open');
+  drawer?.setAttribute('aria-hidden', 'true');
+  drawerFocusRelease?.();
+  drawerFocusRelease = null;
 }
 function switchDrawerTab(name) {
   drawerTabs.forEach((btn) => {
@@ -1459,16 +1495,14 @@ function buildGeneratedSummary(generated) {
 }
 
 function escapeHtml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
+  if (value === null || value === undefined) return '';
+  const div = document.createElement('div');
+  div.textContent = String(value);
+  return div.innerHTML;
 }
 
 function escapeHtmlAttr(value) {
-  return escapeHtml(value);
+  return escapeHtml(value).replace(/"/g, '&quot;');
 }
 
 async function action(label, fn) {
