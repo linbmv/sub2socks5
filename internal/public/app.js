@@ -456,6 +456,13 @@ function renderSocksServices() {
         <label><span>端口</span><input data-port-index="${index}" data-port-field="port" type="number" min="1" step="1" value="${escapeHtmlAttr(item.port || '')}" /></label>
         <label><span>目标出口</span><select data-port-index="${index}" data-port-field="target">${buildOutboundOptionsHtml(item.target || 'proxy')}</select></label>
       </div>
+      <div class="users-block" data-users-block="${index}">
+        <div class="title-sm">SOCKS5 鉴权用户 <span class="muted">（公网开放时强烈建议配置至少一个）</span></div>
+        ${renderUsersHtml(index, item.users || [])}
+        <div class="section-heading-actions">
+          <button type="button" data-add-user="${index}">+ 添加用户</button>
+        </div>
+      </div>
       <div class="section-heading-actions">
         <button type="button" data-suggest-port="${index}">推荐端口</button>
         ${formPorts.length > 1 ? `<button type="button" data-remove-port="${index}">删除</button>` : ''}
@@ -468,6 +475,22 @@ function renderSocksServices() {
   actions.className = 'section-heading-actions';
   actions.innerHTML = '<button type="button" id="add-socks-service">+ 添加 SOCKS5 服务</button>';
   socksServicesEl.appendChild(actions);
+}
+
+function renderUsersHtml(portIndex, users) {
+  if (!users.length) {
+    return '<div class="muted" style="font-size:12px;padding:4px 0">未配置用户：端口将以无鉴权方式开放（仅在 listen=127.0.0.1 或受信网络下使用）</div>';
+  }
+  return users
+    .map(
+      (u, ui) => `
+      <div class="form-grid" style="grid-template-columns:1fr 1fr auto;gap:8px;align-items:end">
+        <label><span>用户名</span><input data-port-index="${portIndex}" data-user-index="${ui}" data-user-field="username" value="${escapeHtmlAttr(u.username || '')}" autocomplete="off" /></label>
+        <label><span>密码</span><input data-port-index="${portIndex}" data-user-index="${ui}" data-user-field="password" type="password" value="${escapeHtmlAttr(u.password || '')}" autocomplete="new-password" /></label>
+        <button type="button" data-remove-user-port="${portIndex}" data-remove-user-index="${ui}" style="padding:6px 10px">删除</button>
+      </div>`
+    )
+    .join('');
 }
 
 function buildOutboundOptionsHtml(selectedTag) {
@@ -694,7 +717,15 @@ function parseFormConfig(validateRequired = false) {
       listen: item.listen?.trim() || '127.0.0.1',
       port: Number(item.port || 0),
       target: item.target || next.routing.routeFinal || 'proxy',
-      sniff: true
+      sniff: true,
+      users: Array.isArray(item.users)
+        ? item.users
+            .map((u) => ({
+              username: typeof u?.username === 'string' ? u.username.trim() : '',
+              password: typeof u?.password === 'string' ? u.password : ''
+            }))
+            .filter((u) => u.username && u.password)
+        : []
     }));
 
     if (validateRequired) {
@@ -726,6 +757,11 @@ function parseFormConfig(validateRequired = false) {
         seenPorts.add(`${portItem.listen}:${portItem.port}`);
 
         if (!portItem.target) throw new Error(`SOCKS5 服务 ${portItem.tag} 目标出口不能为空`);
+
+        // 公网/LAN 开放且未配置 users → 警告
+        if ((portItem.listen === '0.0.0.0' || portItem.listen === '::') && portItem.users.length === 0) {
+          console.warn(`[安全警告] SOCKS5 服务 ${portItem.tag} 监听 ${portItem.listen} 但未配置鉴权用户，将以无密码方式开放给外部网络`);
+        }
       }
     }
 
@@ -775,7 +811,15 @@ function normalizePorts(ports) {
     listen: item.listen || '127.0.0.1',
     port: item.port || '',
     target: item.target || 'proxy',
-    sniff: true
+    sniff: true,
+    users: Array.isArray(item.users)
+      ? item.users
+          .filter((u) => u && typeof u === 'object')
+          .map((u) => ({
+            username: typeof u.username === 'string' ? u.username : '',
+            password: typeof u.password === 'string' ? u.password : ''
+          }))
+      : []
   }));
 }
 
@@ -785,7 +829,8 @@ function createDefaultPort() {
     listen: '127.0.0.1',
     port: '',
     target: fields.routeFinal?.value || latestData.config?.routing?.routeFinal || 'proxy',
-    sniff: true
+    sniff: true,
+    users: []
   };
 }
 
@@ -1087,7 +1132,14 @@ function buildSocksAddressList() {
       const host = externalHost && (p.listen === '0.0.0.0' || p.listen === '::')
         ? externalHost
         : p.listen;
-      return `socks5://${host}:${p.port}`;
+      // 取首个有效用户作为导出凭据（一个端口可配多用户但导出只挂一个）
+      const firstUser = Array.isArray(p.users)
+        ? p.users.find((u) => u && u.username && u.password)
+        : null;
+      const credPart = firstUser
+        ? `${encodeURIComponent(firstUser.username)}:${encodeURIComponent(firstUser.password)}@`
+        : '';
+      return `socks5://${credPart}${host}:${p.port}`;
     });
 }
 
@@ -1920,6 +1972,19 @@ document.addEventListener('input', (event) => {
   const target = event.target;
   if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return;
 
+  if (target.dataset.userField !== undefined && target.dataset.portIndex !== undefined) {
+    const portIndex = Number(target.dataset.portIndex);
+    const userIndex = Number(target.dataset.userIndex);
+    const field = target.dataset.userField;
+    if (!Array.isArray(formPorts[portIndex].users)) formPorts[portIndex].users = [];
+    if (!formPorts[portIndex].users[userIndex]) formPorts[portIndex].users[userIndex] = { username: '', password: '' };
+    formPorts[portIndex].users[userIndex][field] = target.value;
+    formTouched = true;
+    markFormInteraction(true);
+    updateEditorState();
+    return;
+  }
+
   if (target.dataset.portIndex) {
     const index = Number(target.dataset.portIndex);
     const field = target.dataset.portField;
@@ -1979,6 +2044,30 @@ document.addEventListener('click', (event) => {
       formTouched = true;
       updateEditorState();
     }
+  }
+
+  if (target.dataset.addUser !== undefined) {
+    const portIndex = Number(target.dataset.addUser);
+    if (!Array.isArray(formPorts[portIndex].users)) formPorts[portIndex].users = [];
+    formPorts[portIndex].users.push({ username: '', password: '' });
+    renderSocksServices();
+    formTouched = true;
+    markFormInteraction(true);
+    updateEditorState();
+    return;
+  }
+
+  if (target.dataset.removeUserPort !== undefined) {
+    const portIndex = Number(target.dataset.removeUserPort);
+    const userIndex = Number(target.dataset.removeUserIndex);
+    if (Array.isArray(formPorts[portIndex].users)) {
+      formPorts[portIndex].users.splice(userIndex, 1);
+      renderSocksServices();
+      formTouched = true;
+      markFormInteraction(true);
+      updateEditorState();
+    }
+    return;
   }
 
   if (target.dataset.toggleSubscriptionExpand) {

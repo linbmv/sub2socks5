@@ -2485,12 +2485,32 @@ func buildSingBoxConfig(cfg, sub map[string]any) map[string]any {
 		if inboundTag == "" {
 			continue
 		}
-		inbounds = append(inbounds, map[string]any{
+		inbound := map[string]any{
 			"type":        "socks",
 			"tag":         inboundTag,
 			"listen":      mustStr(pm["listen"]),
 			"listen_port": int(toFloat(pm["port"])),
-		})
+		}
+		// SOCKS5 用户名密码鉴权（可选）。
+		// users 来自 ports[].users，格式: [{"username":"u","password":"p"}, ...]
+		// 配置后该端口仅接受提供匹配凭据的客户端连接。
+		users := []any{}
+		for _, u := range getSlice(pm, "users") {
+			um, ok := u.(map[string]any)
+			if !ok {
+				continue
+			}
+			username := strings.TrimSpace(mustStr(um["username"]))
+			password := strings.TrimSpace(mustStr(um["password"]))
+			if username == "" || password == "" {
+				continue
+			}
+			users = append(users, map[string]any{"username": username, "password": password})
+		}
+		if len(users) > 0 {
+			inbound["users"] = users
+		}
+		inbounds = append(inbounds, inbound)
 
 		target := strings.TrimSpace(mustStr(pm["target"]))
 		if target == "" {
@@ -2757,6 +2777,7 @@ func (a *App) handleServicesList(w http.ResponseWriter, r *http.Request) {
 			"target":  target,
 			"sniff":   true,
 			"enabled": true,
+			"users":   normalizeServiceUsers(getSlice(body, "users")),
 		}
 		ports = append(ports, svc)
 		a.cfg["ports"] = ports
@@ -2806,6 +2827,9 @@ func (a *App) handleServicesItem(w http.ResponseWriter, r *http.Request) {
 			current = map[string]any{}
 		}
 		merged := mergePatch(current, body)
+		if _, ok := body["users"]; ok {
+			merged["users"] = normalizeServiceUsers(getSlice(body, "users"))
+		}
 		ports[idx] = merged
 		a.cfg["ports"] = ports
 		_ = writeJSON(filepath.Join(a.dataDir, "app-config.json"), a.cfg)
@@ -2836,6 +2860,34 @@ func serviceWithID(svc map[string]any) map[string]any {
 		out[k] = v
 	}
 	out["id"] = mustStr(svc["tag"])
+	return out
+}
+
+// normalizeServiceUsers 校验并规范化 SOCKS5 inbound 用户列表。
+// 入参形如 [{"username":"u","password":"p"}, ...]，丢弃任一字段为空的项。
+// 始终返回非 nil slice（[]any{}），便于持久化到 JSON。
+func normalizeServiceUsers(raw []any) []any {
+	out := []any{}
+	if raw == nil {
+		return out
+	}
+	seen := map[string]bool{}
+	for _, u := range raw {
+		um, ok := u.(map[string]any)
+		if !ok {
+			continue
+		}
+		username := strings.TrimSpace(mustStr(um["username"]))
+		password := strings.TrimSpace(mustStr(um["password"]))
+		if username == "" || password == "" {
+			continue
+		}
+		if seen[username] {
+			continue
+		}
+		seen[username] = true
+		out = append(out, map[string]any{"username": username, "password": password})
+	}
 	return out
 }
 
