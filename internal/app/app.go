@@ -2928,21 +2928,31 @@ func (a *App) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host := r.Host
-		allowedHosts := []string{"localhost", "127.0.0.1", "[::1]"}
-		if envHost := strings.TrimSpace(os.Getenv("SUB2SOCKS5_HOST")); envHost != "" && envHost != "0.0.0.0" {
-			allowedHosts = append(allowedHosts, envHost)
-		}
-		hostValid := false
-		for _, h := range allowedHosts {
-			if strings.HasPrefix(host, h+":") || host == h {
-				hostValid = true
-				break
+		authEnabled := strings.TrimSpace(os.Getenv("SUB2SOCKS5_AUTH_TOKEN")) != ""
+
+		// Host 校验：仅在鉴权启用时执行（防 DNS rebinding 升权）。
+		// 未启用鉴权时本来就没有"权限边界"可被攻破，强制 Host 校验只会让 LAN 访问失败。
+		if authEnabled {
+			host := r.Host
+			if i := strings.LastIndex(host, ":"); i != -1 && !strings.HasSuffix(host, "]") {
+				host = host[:i]
 			}
-		}
-		if !hostValid {
-			http.Error(w, "Invalid Host header", http.StatusBadRequest)
-			return
+			host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+			allowedHosts := map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true}
+			if envHost := strings.TrimSpace(os.Getenv("SUB2SOCKS5_HOST")); envHost != "" && envHost != "0.0.0.0" {
+				allowedHosts[envHost] = true
+			}
+			if extra := strings.TrimSpace(os.Getenv("SUB2SOCKS5_ALLOWED_HOSTS")); extra != "" {
+				for _, h := range strings.Split(extra, ",") {
+					if h = strings.TrimSpace(h); h != "" {
+						allowedHosts[h] = true
+					}
+				}
+			}
+			if !allowedHosts[host] {
+				http.Error(w, "Invalid Host header. Set SUB2SOCKS5_ALLOWED_HOSTS to allow LAN/domain access.", http.StatusBadRequest)
+				return
+			}
 		}
 
 		w.Header().Set("x-content-type-options", "nosniff")
@@ -2952,9 +2962,15 @@ func withCORS(next http.Handler) http.Handler {
 		w.Header().Set("cache-control", "no-store")
 
 		origin := r.Header.Get("Origin")
-		authEnabled := strings.TrimSpace(os.Getenv("SUB2SOCKS5_AUTH_TOKEN")) != ""
 		if authEnabled && origin != "" {
 			allowedOrigins := []string{"http://localhost", "http://127.0.0.1", "https://localhost", "https://127.0.0.1"}
+			if extra := strings.TrimSpace(os.Getenv("SUB2SOCKS5_ALLOWED_HOSTS")); extra != "" {
+				for _, h := range strings.Split(extra, ",") {
+					if h = strings.TrimSpace(h); h != "" {
+						allowedOrigins = append(allowedOrigins, "http://"+h, "https://"+h)
+					}
+				}
+			}
 			originAllowed := false
 			for _, allowed := range allowedOrigins {
 				if strings.HasPrefix(origin, allowed) {
