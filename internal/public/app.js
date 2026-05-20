@@ -206,13 +206,6 @@ const fields = {
   routeFinal: document.getElementById('field-route-final')
 };
 
-const infoViews = {
-  architecture: setupInfoView('architecture'),
-  kernel: setupInfoView('kernel'),
-  subscription: setupInfoView('subscription'),
-  logs: setupInfoView('logs')
-};
-
 let lastSavedConfigText = '';
 let currentView = 'form';
 let formTouched = false;
@@ -1410,25 +1403,6 @@ function switchTab(tabName) {
     panel.classList.toggle('is-active', name === tabName);
     panel.classList.toggle('is-hidden', name !== tabName);
   }
-}
-
-function setupInfoView(name) {
-  const formViewEl = document.getElementById(`${name}-form-view`);
-  const jsonViewEl = document.getElementById(`${name}-json-view`);
-  const formButton = document.getElementById(`switch-${name}-form`);
-  const jsonButton = document.getElementById(`switch-${name}-json`);
-  const state = { formViewEl, jsonViewEl, formButton, jsonButton };
-  formButton.addEventListener('click', () => setInfoView(name, 'form'));
-  jsonButton.addEventListener('click', () => setInfoView(name, 'json'));
-  return state;
-}
-
-function setInfoView(name, mode) {
-  const state = infoViews[name];
-  state.formViewEl.classList.toggle('is-hidden', mode !== 'form');
-  state.jsonViewEl.classList.toggle('is-hidden', mode !== 'json');
-  state.formButton.classList.toggle('is-active', mode === 'form');
-  state.jsonButton.classList.toggle('is-active', mode === 'json');
 }
 
 function renderKeyValue(container, entries) {
