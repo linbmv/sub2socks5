@@ -402,12 +402,13 @@ Docker 镜像内置 sub2socks5 主程序与 sing-box 默认内核（首次启动
 git clone https://github.com/sglinhome/sub2socks5.git
 cd sub2socks5
 mkdir -p data runtime bin
-sudo chown -R 10001:10001 data runtime bin
 cp .env.example .env
 # 按需编辑 .env，最简场景（仅本机）保持默认即可
 docker compose up -d --build
 docker compose logs -f sub2socks5
 ```
+
+> entrypoint 会自动把 `data` / `runtime` / `bin` 目录的所有者改为容器内 UID `10001`，无需手动 `chown`。
 
 默认仅本机访问：`http://127.0.0.1:18080`。
 

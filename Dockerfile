@@ -43,7 +43,7 @@ FROM debian:${DEBIAN_TAG} AS runtime
 
 RUN set -eux; \
     apt-get update; \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates tzdata; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates tzdata util-linux; \
     rm -rf /var/lib/apt/lists/*; \
     groupadd --system --gid 10001 sub2socks5; \
     useradd --system --uid 10001 --gid sub2socks5 --home-dir /app --shell /usr/sbin/nologin sub2socks5
@@ -66,6 +66,7 @@ LABEL org.opencontainers.image.title="sub2socks5" \
       org.opencontainers.image.source="https://github.com/sglinhome/sub2socks5" \
       org.opencontainers.image.licenses="MIT"
 
-USER sub2socks5
+# 容器以 root 启动 entrypoint：先 chown 挂载卷为 sub2socks5:sub2socks5，
+# 再用 setpriv 降权到 UID 10001 运行主程序。避免用户忘记 chown 导致 Permission denied。
 EXPOSE 18080 18081-18100
 ENTRYPOINT ["/entrypoint.sh"]
