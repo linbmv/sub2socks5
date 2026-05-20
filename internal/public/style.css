@@ -186,29 +186,6 @@ button:disabled {
   background: var(--inner-card-bg);
   color: var(--text-main);
 }
-.deployment-banner {
-  margin: 0 0 16px;
-  padding: 12px 16px;
-  border-radius: 10px;
-  border: 1px solid var(--input-border);
-  background: var(--inner-card-bg);
-  color: var(--text-main);
-  font-size: 14px;
-  line-height: 1.55;
-}
-.deployment-banner.is-hidden {
-  display: none;
-}
-.deployment-banner.level-info {
-  border-color: #7c8cff;
-  background: #eef0ff;
-  color: #3b4ad6;
-}
-.deployment-banner.level-warning {
-  border-color: #f2a444;
-  background: #fff7ed;
-  color: #9a3412;
-}
 .bulk-add-example {
   padding: 3px 10px;
   font-size: 12px;
@@ -1064,12 +1041,6 @@ details[open] > summary { margin-bottom: 4px; }
   font-size: 22px;
   font-weight: 700;
 }
-.content-header .deployment-banner {
-  margin-bottom: 0;
-}
-.content-header .deployment-banner.is-hidden {
-  margin: 0;
-}
 .content-body {
   padding: 20px 28px 32px;
   flex: 1;
@@ -1149,11 +1120,7 @@ details[open] > summary { margin-bottom: 4px; }
   font-weight: 700;
   color: var(--accent-strong);
   flex-shrink: 0;
-}
-.topbar-banner {
-  flex: 1;
-  font-size: 13px;
-  color: var(--text-muted);
+  margin-right: auto;
 }
 .topbar-icon-btn {
   width: 32px;

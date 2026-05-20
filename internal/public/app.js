@@ -259,12 +259,9 @@ async function load() {
     generated: generatedData,
     logs: logsData,
     download: downloadData,
-    deploymentHint: configData.deploymentHint || null,
-    externalHost: typeof configData.externalHost === 'string' ? configData.externalHost.trim() : '',
     authEnabled: !!configData.authEnabled
   };
 
-  renderDeploymentBanner(latestData.deploymentHint);
   renderLogoutButton(latestData.authEnabled);
 
   const formattedConfig = JSON.stringify(configData.config, null, 2);
@@ -1118,13 +1115,10 @@ function renderCopySocksTabs() {
 }
 
 function buildSocksAddressList() {
-  const externalHost = latestData?.externalHost || '';
   return formPorts
     .filter((p) => p.listen && p.port)
     .map((p) => {
-      const host = externalHost && (p.listen === '0.0.0.0' || p.listen === '::')
-        ? externalHost
-        : p.listen;
+      const host = p.listen;
       // 取首个有效用户作为导出凭据（一个端口可配多用户但导出只挂一个）
       const firstUser = Array.isArray(p.users)
         ? p.users.find((u) => u && u.username && u.password)
@@ -1134,21 +1128,6 @@ function buildSocksAddressList() {
         : '';
       return `socks5://${credPart}${host}:${p.port}`;
     });
-}
-
-function renderDeploymentBanner(hint) {
-  const el = document.getElementById('deployment-banner');
-  if (!el) return;
-  el.classList.remove('level-info', 'level-warning');
-  if (!hint || !hint.message) {
-    el.classList.add('is-hidden');
-    el.textContent = '';
-    return;
-  }
-  const level = hint.level === 'warning' ? 'level-warning' : 'level-info';
-  el.classList.add(level);
-  el.classList.remove('is-hidden');
-  el.textContent = hint.message;
 }
 
 function renderLogoutButton(enabled) {

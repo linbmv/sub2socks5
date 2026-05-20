@@ -472,8 +472,6 @@ sudo ufw reload
 | `SUB2SOCKS5_SING_BOX_BINARY` | 指向已有 sing-box 二进制 | 配置文件 `app.singBoxBinary` |
 | `SUB2SOCKS5_USERNAME` | Web UI 登录用户名（留空默认 `admin`，仅 `PASSWORD` 设置时生效） | `admin` |
 | `SUB2SOCKS5_PASSWORD` | Web UI 登录密码，**设置后即启用鉴权**（公网部署必填） | 未设置时鉴权关闭 |
-| `SUB2SOCKS5_DEPLOYMENT_HINT` | Web UI 顶部部署横幅（`level\|message`） | 不显示 |
-| `SUB2SOCKS5_EXTERNAL_HOST` | 复制 SOCKS5 时把 `0.0.0.0`/`::` 替换为该地址 | 保留原 `listen` |
 | `WEBUI_BIND` | compose 中 Web UI 端口绑定接口 | `127.0.0.1` |
 | `SOCKS5_BIND` | compose 中 SOCKS5 端口绑定接口 | `0.0.0.0` |
 

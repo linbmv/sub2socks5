@@ -35,10 +35,6 @@ services:
       # 生成强密码：openssl rand -base64 24
       SUB2SOCKS5_USERNAME: ${SUB2SOCKS5_USERNAME:-}
       SUB2SOCKS5_PASSWORD: ${SUB2SOCKS5_PASSWORD:-}
-      # 复制 SOCKS5 时把 0.0.0.0/:: 替换为该地址（VPS 公网域名）。
-      SUB2SOCKS5_EXTERNAL_HOST: ${SUB2SOCKS5_EXTERNAL_HOST:-}
-      # Web UI 顶部部署横幅，格式 "level|message"。
-      SUB2SOCKS5_DEPLOYMENT_HINT: ${SUB2SOCKS5_DEPLOYMENT_HINT:-}
     ports:
       # Web UI 端口。
       # WEBUI_BIND=127.0.0.1（默认）→ 仅本机访问。

@@ -492,8 +492,6 @@ func (a *App) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"plannedKernel":      a.plannedKernel,
 			"releaseList":        a.releaseList,
 			"download":           a.downloadState,
-			"deploymentHint":     deploymentHint(),
-			"externalHost":       strings.TrimSpace(os.Getenv("SUB2SOCKS5_EXTERNAL_HOST")),
 			"authEnabled":        strings.TrimSpace(os.Getenv("SUB2SOCKS5_PASSWORD")) != "",
 		})
 	case http.MethodPost:
@@ -2672,28 +2670,6 @@ func findPort(host string, start int) int {
 		}
 	}
 	return start
-}
-
-// deploymentHint 由环境变量提供部署模式提示，供 Web UI 顶部横幅显示。
-// 支持两种格式：纯文本（默认 info 级）或 "level|message"（level 取 info/warning）。
-func deploymentHint() map[string]any {
-	raw := strings.TrimSpace(os.Getenv("SUB2SOCKS5_DEPLOYMENT_HINT"))
-	if raw == "" {
-		return nil
-	}
-	level := "info"
-	message := raw
-	if idx := strings.Index(raw, "|"); idx > 0 {
-		candidate := strings.ToLower(strings.TrimSpace(raw[:idx]))
-		if candidate == "info" || candidate == "warning" {
-			level = candidate
-			message = strings.TrimSpace(raw[idx+1:])
-		}
-	}
-	if message == "" {
-		return nil
-	}
-	return map[string]any{"level": level, "message": message}
 }
 
 func (a *App) handleConfigPatch(w http.ResponseWriter, r *http.Request) {
