@@ -41,6 +41,7 @@
       <div class="task-card-header">
         <h2>📡 订阅地址</h2>
         <div class="task-card-actions">
+          <button id="save-config" type="button" style="background:#16a34a">💾 保存配置</button>
           <button id="refresh-sub" type="button">更新订阅</button>
           <button id="add-subscription-url" type="button">+ 添加订阅地址</button>
         </div>
@@ -69,10 +70,7 @@
       <section data-drawer-section="dns" class="drawer-section is-active">
         <div class="drawer-section-header">
           <h3>基础配置</h3>
-          <div class="drawer-section-actions">
-            <button id="save-config" type="button">保存配置</button>
-            <div id="editor-status" class="editor-status is-saved">配置已保存</div>
-          </div>
+          <div id="editor-status" class="editor-status is-saved">配置已保存</div>
         </div>
         <div id="form-view" class="config-view">
           <div class="form-grid form-grid-basic">

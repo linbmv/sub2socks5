@@ -531,6 +531,10 @@ function extractErrorMessage(data, response) {
 }
 
 function setStatus(message, kind = 'idle') {
+  if (!statusBar) {
+    if (kind === 'error') console.error('[sub2socks5]', message);
+    return;
+  }
   statusBar.textContent = message;
   statusBar.className = `status-bar is-${kind}`;
 }
