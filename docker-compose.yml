@@ -5,17 +5,17 @@
 #
 # 部署模式（由 .env 控制）：
 #
-#   ┌────────────────┬──────────────────────────────────┬──────────────────────────────────┐
-#   │ 模式           │ .env 关键变量                     │ 访问方式                          │
-#   ├────────────────┼──────────────────────────────────┼──────────────────────────────────┤
-#   │ 本机           │ 全部默认                          │ http://127.0.0.1:18080            │
-#   │ LAN 共享       │ USERNAME + PASSWORD + ALLOWED_HOSTS│ http://<lan-ip>:18080            │
-#   │                │ + WEBUI_BIND=0.0.0.0              │                                   │
-#   │ CF Tunnel      │ USERNAME + PASSWORD + ALLOWED_HOSTS│ https://<your-domain>           │
-#   │ (本仓库自起)   │ + CF_TUNNEL_TOKEN                 │ （sub2socks5 容器名: sub2socks5） │
-#   │ CF Tunnel      │ USERNAME + PASSWORD + ALLOWED_HOSTS│ 由你的 cloudflared 反代          │
-#   │ (外部 cf 容器) │ + EXTERNAL_NETWORK=<网络名>       │ Public Hostname URL=sub2socks5:18080 │
-#   └────────────────┴──────────────────────────────────┴──────────────────────────────────┘
+#   ┌────────────────┬──────────────────────────────┬──────────────────────────────────┐
+#   │ 模式           │ .env 关键变量                 │ 访问方式                          │
+#   ├────────────────┼──────────────────────────────┼──────────────────────────────────┤
+#   │ 本机           │ 全部默认                      │ http://127.0.0.1:18080            │
+#   │ LAN 共享       │ USERNAME + PASSWORD          │ http://<lan-ip>:18080             │
+#   │                │ + WEBUI_BIND=0.0.0.0         │                                   │
+#   │ CF Tunnel      │ USERNAME + PASSWORD          │ https://<your-domain>             │
+#   │ (本仓库自起)   │ + CF_TUNNEL_TOKEN            │ （sub2socks5 容器名: sub2socks5） │
+#   │ CF Tunnel      │ USERNAME + PASSWORD          │ 由你的 cloudflared 反代           │
+#   │ (外部 cf 容器) │ + EXTERNAL_NETWORK=<网络名>  │ Public Hostname URL=sub2socks5:18080 │
+#   └────────────────┴──────────────────────────────┴──────────────────────────────────┘
 #
 # 详细参考 README "Docker 部署" 章节。
 
@@ -39,9 +39,6 @@ services:
       # 生成强密码：openssl rand -base64 24
       SUB2SOCKS5_USERNAME: ${SUB2SOCKS5_USERNAME:-}
       SUB2SOCKS5_PASSWORD: ${SUB2SOCKS5_PASSWORD:-}
-      # Host 头白名单（防 DNS rebinding），仅在鉴权启用时生效；逗号分隔；
-      # 默认已含 localhost / 127.0.0.1 / ::1。CF Tunnel 模式填回源域名。
-      SUB2SOCKS5_ALLOWED_HOSTS: ${SUB2SOCKS5_ALLOWED_HOSTS:-}
       # 复制 SOCKS5 时把 0.0.0.0/:: 替换为该地址（VPS 公网域名）。
       SUB2SOCKS5_EXTERNAL_HOST: ${SUB2SOCKS5_EXTERNAL_HOST:-}
       # Web UI 顶部部署横幅，格式 "level|message"。
@@ -49,7 +46,7 @@ services:
     ports:
       # Web UI 端口。
       # WEBUI_BIND=127.0.0.1（默认）→ 仅本机访问；CF Tunnel 同 docker network 也走得通。
-      # WEBUI_BIND=0.0.0.0          → LAN/公网直连（务必先设 USERNAME+PASSWORD + ALLOWED_HOSTS）。
+      # WEBUI_BIND=0.0.0.0          → LAN/公网直连（务必先设 USERNAME+PASSWORD）。
       - "${WEBUI_BIND:-127.0.0.1}:18080:18080"
       # SOCKS5 端口范围。开放外部使用前请在 Web UI 给每个端口配 username/password 用户。
       - "${SOCKS5_BIND:-0.0.0.0}:18081-18100:18081-18100"

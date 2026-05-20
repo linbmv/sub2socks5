@@ -2989,59 +2989,15 @@ func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authEnabled := strings.TrimSpace(os.Getenv("SUB2SOCKS5_PASSWORD")) != ""
 
-		// Host 校验：仅在鉴权启用时执行（防 DNS rebinding 升权）。
-		// 未启用鉴权时本来就没有"权限边界"可被攻破，强制 Host 校验只会让 LAN 访问失败。
-		if authEnabled {
-			host := r.Host
-			if i := strings.LastIndex(host, ":"); i != -1 && !strings.HasSuffix(host, "]") {
-				host = host[:i]
-			}
-			host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
-			allowedHosts := map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true}
-			if envHost := strings.TrimSpace(os.Getenv("SUB2SOCKS5_HOST")); envHost != "" && envHost != "0.0.0.0" {
-				allowedHosts[envHost] = true
-			}
-			if extra := strings.TrimSpace(os.Getenv("SUB2SOCKS5_ALLOWED_HOSTS")); extra != "" {
-				for _, h := range strings.Split(extra, ",") {
-					if h = strings.TrimSpace(h); h != "" {
-						allowedHosts[h] = true
-					}
-				}
-			}
-			if !allowedHosts[host] {
-				http.Error(w, "Invalid Host header. Set SUB2SOCKS5_ALLOWED_HOSTS to allow LAN/domain access.", http.StatusBadRequest)
-				return
-			}
-		}
-
 		w.Header().Set("x-content-type-options", "nosniff")
 		w.Header().Set("x-frame-options", "DENY")
 		w.Header().Set("referrer-policy", "no-referrer")
 		w.Header().Set("cross-origin-resource-policy", "same-origin")
 		w.Header().Set("cache-control", "no-store")
 
-		origin := r.Header.Get("Origin")
-		if authEnabled && origin != "" {
-			allowedOrigins := []string{"http://localhost", "http://127.0.0.1", "https://localhost", "https://127.0.0.1"}
-			if extra := strings.TrimSpace(os.Getenv("SUB2SOCKS5_ALLOWED_HOSTS")); extra != "" {
-				for _, h := range strings.Split(extra, ",") {
-					if h = strings.TrimSpace(h); h != "" {
-						allowedOrigins = append(allowedOrigins, "http://"+h, "https://"+h)
-					}
-				}
-			}
-			originAllowed := false
-			for _, allowed := range allowedOrigins {
-				if strings.HasPrefix(origin, allowed) {
-					originAllowed = true
-					break
-				}
-			}
-			if originAllowed {
-				w.Header().Set("access-control-allow-origin", origin)
-				w.Header().Set("vary", "Origin")
-			}
-		} else if !authEnabled {
+		// 鉴权未启用时放开 CORS 方便本地调试；启用时不返回 Allow-Origin，
+		// 浏览器同源请求不依赖该头，跨域 fetch 因 SameSite=Strict cookie 注定无会话。
+		if !authEnabled {
 			w.Header().Set("access-control-allow-origin", "*")
 		}
 

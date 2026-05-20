@@ -417,9 +417,9 @@ docker compose logs -f sub2socks5
 | 模式 | 关键变量 | 访问方式 |
 |---|---|---|
 | **A 仅本机** | 全部默认 | `http://127.0.0.1:18080` |
-| **B LAN 共享** | `WEBUI_BIND=0.0.0.0` + `USERNAME` + `PASSWORD` + `ALLOWED_HOSTS=<lan-ip>` | `http://<lan-ip>:18080` |
-| **C CF Tunnel（自起）** | `USERNAME` + `PASSWORD` + `ALLOWED_HOSTS=<回源域名>` + `CF_TUNNEL_TOKEN` | `https://<回源域名>` |
-| **D CF Tunnel（外部）** | `USERNAME` + `PASSWORD` + `ALLOWED_HOSTS=<回源域名>` + `EXTERNAL_NETWORK=<网络名>` | `https://<回源域名>` |
+| **B LAN 共享** | `WEBUI_BIND=0.0.0.0` + `USERNAME` + `PASSWORD` | `http://<lan-ip>:18080` |
+| **C CF Tunnel（自起）** | `USERNAME` + `PASSWORD` + `CF_TUNNEL_TOKEN` | `https://<回源域名>` |
+| **D CF Tunnel（外部）** | `USERNAME` + `PASSWORD` + `EXTERNAL_NETWORK=<网络名>` | `https://<回源域名>` |
 
 启动命令：
 
@@ -468,7 +468,7 @@ curl --proxy socks5://user:pass@your-vps.example.com:18081 https://ifconfig.me
    - Domain：你的域名
    - Service Type：`HTTP`
    - URL：`sub2socks5:18080`
-4. `.env` 同时填好 `SUB2SOCKS5_USERNAME`（留空默认 admin）+ `SUB2SOCKS5_PASSWORD` + `SUB2SOCKS5_ALLOWED_HOSTS=<回源域名>`
+4. `.env` 同时填好 `SUB2SOCKS5_USERNAME`（留空默认 admin）+ `SUB2SOCKS5_PASSWORD`
 5. `docker compose --profile cf-tunnel up -d --build`
 
 #### 模式 D：复用已有外部 `cloudflared` 容器
@@ -478,7 +478,7 @@ curl --proxy socks5://user:pass@your-vps.example.com:18081 https://ifconfig.me
 1. `docker network ls` 找到 cloudflared 所在的 docker network 名
 2. `.env` 设 `EXTERNAL_NETWORK=<网络名>`（不要设 `CF_TUNNEL_TOKEN`，避免重复起 cloudflared）
 3. 在已有 Tunnel 的 **Public Hostname** 添加 URL：`http://sub2socks5:18080`
-4. `.env` 填好 `SUB2SOCKS5_USERNAME`（留空默认 admin）+ `SUB2SOCKS5_PASSWORD` + `SUB2SOCKS5_ALLOWED_HOSTS=<回源域名>`
+4. `.env` 填好 `SUB2SOCKS5_USERNAME`（留空默认 admin）+ `SUB2SOCKS5_PASSWORD`
 5. `docker compose up -d --build`
 
 > 🛡️ **CF Tunnel 模式的安全模型**
@@ -507,7 +507,6 @@ sudo ufw reload
 | `SUB2SOCKS5_SING_BOX_BINARY` | 指向已有 sing-box 二进制 | 配置文件 `app.singBoxBinary` |
 | `SUB2SOCKS5_USERNAME` | Web UI 登录用户名（留空默认 `admin`，仅 `PASSWORD` 设置时生效） | `admin` |
 | `SUB2SOCKS5_PASSWORD` | Web UI 登录密码，**设置后即启用鉴权**（公网部署必填） | 未设置时鉴权关闭 |
-| `SUB2SOCKS5_ALLOWED_HOSTS` | 鉴权启用时的 Host 头白名单（防 DNS rebinding），逗号分隔 | `localhost,127.0.0.1,::1` |
 | `SUB2SOCKS5_DEPLOYMENT_HINT` | Web UI 顶部部署横幅（`level\|message`） | 不显示 |
 | `SUB2SOCKS5_EXTERNAL_HOST` | 复制 SOCKS5 时把 `0.0.0.0`/`::` 替换为该地址 | 保留原 `listen` |
 | `WEBUI_BIND` | compose 中 Web UI 端口绑定接口 | `127.0.0.1` |
