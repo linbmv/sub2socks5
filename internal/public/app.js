@@ -95,7 +95,7 @@ function updateRuntimeBadge(info) {
   }
 }
 
-const editor = document.getElementById('config-editor');
+const editor = document.getElementById('json-editor');
 const nodesEl = document.getElementById('nodes');
 
 const generatedEl = document.getElementById('generated');
@@ -131,14 +131,14 @@ const socksConfigOverlay = document.getElementById('socks-config-overlay');
 const socksConfigStep = document.getElementById('socks-config-step');
 const socksConfigProgress = document.getElementById('socks-config-progress');
 const socksConfigDetail = document.getElementById('socks-config-detail');
-const cancelSocksConfigButton = document.getElementById('cancel-socks-config');
+const cancelSocksConfigButton = document.getElementById('socks-config-cancel');
 const subAutoUpdateOverlay = document.getElementById('sub-auto-update-overlay');
 const subAutoScopeWrap = document.getElementById('sub-auto-scope-wrap');
 const subAutoModeWrap = document.getElementById('sub-auto-mode-wrap');
-const subUrlZoomOverlay = document.getElementById('sub-url-zoom-overlay');
-const subUrlZoomInput = document.getElementById('sub-url-zoom-input');
-const saveSubUrlZoomButton = document.getElementById('save-sub-url-zoom');
-const cancelSubUrlZoomButton = document.getElementById('cancel-sub-url-zoom');
+const subUrlZoomOverlay = document.getElementById('subscription-zoom-overlay');
+const subUrlZoomInput = document.getElementById('subscription-zoom-textarea');
+const saveSubUrlZoomButton = document.getElementById('subscription-zoom-save');
+const cancelSubUrlZoomButton = document.getElementById('subscription-zoom-cancel');
 const copySocksOverlay = document.getElementById('copy-socks-overlay');
 const copySocksTabLines = document.getElementById('copy-socks-tab-lines');
 const copySocksTabCustom = document.getElementById('copy-socks-tab-custom');
@@ -167,8 +167,8 @@ const subAutoDayWrap = document.getElementById('sub-auto-day-wrap');
 const subAutoDayModeEl = document.getElementById('sub-auto-day-mode');
 const subAutoTargetsWrap = document.getElementById('sub-auto-targets-wrap');
 const subAutoTargetsEl = document.getElementById('sub-auto-targets');
-const saveSubAutoUpdateButton = document.getElementById('save-sub-auto-update');
-const cancelSubAutoUpdateButton = document.getElementById('cancel-sub-auto-update');
+const saveSubAutoUpdateButton = document.getElementById('sub-auto-update-save');
+const cancelSubAutoUpdateButton = document.getElementById('sub-auto-update-cancel');
 
 const tabPanels = {
   overview: document.getElementById('tab-overview'),
