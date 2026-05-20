@@ -1632,7 +1632,7 @@ async function refreshAfterNodesUpdate() {
 document.getElementById('save-config')?.addEventListener('click', () => action('保存配置', async () => {
   await saveCurrentConfigIfNeeded(true);
   setStatus('配置已保存并自动更新 sing-box 配置', 'success');
-});
+}));
 
 document.getElementById('refresh-sub')?.addEventListener('click', () => action('更新订阅', async () => {
   const saveResult = await saveCurrentConfigIfNeeded(false);
@@ -1640,7 +1640,7 @@ document.getElementById('refresh-sub')?.addEventListener('click', () => action('
     setStatus('检测到未保存配置，已先保存配置', 'success');
   }
   await runSubscriptionRefreshFlow();
-});
+}));
 
 document.getElementById('start')?.addEventListener('click', () => action('启动 sing-box', async () => {
   await post('/api/runtime/start');
