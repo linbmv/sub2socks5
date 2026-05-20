@@ -204,6 +204,12 @@ const fields = {
   routeFinal: document.getElementById('field-route-final')
 };
 
+// 安全赋值：HTML 简化后部分字段元素可能不存在，此 helper 让 .value/.disabled 等
+// 写操作在 null 元素上静默跳过，防止 init/保存路径抛 TypeError 中断模块。
+function setVal(el, value) {
+  if (el) el.value = value;
+}
+
 let lastSavedConfigText = '';
 let currentView = 'form';
 let formTouched = false;
@@ -782,11 +788,11 @@ function fillForm(config) {
   formPorts = normalizePorts(config.ports || []);
   renderRouteFinalOptions();
   fields.routeFinal.value = config.routing?.routeFinal || 'proxy';
-  subAutoScopeEl.value = config.subscription?.autoUpdate?.scope || 'off';
-  subAutoModeEl.value = config.subscription?.autoUpdate?.mode || 'interval';
-  subAutoIntervalEl.value = config.subscription?.autoUpdate?.intervalMinutes || 60;
-  subAutoTimeEl.value = config.subscription?.autoUpdate?.time || '03:00';
-  subAutoDayModeEl.value = config.subscription?.autoUpdate?.dayMode || 'daily';
+  setVal(subAutoScopeEl, config.subscription?.autoUpdate?.scope || 'off');
+  setVal(subAutoModeEl, config.subscription?.autoUpdate?.mode || 'interval');
+  setVal(subAutoIntervalEl, config.subscription?.autoUpdate?.intervalMinutes || 60);
+  setVal(subAutoTimeEl, config.subscription?.autoUpdate?.time || '03:00');
+  setVal(subAutoDayModeEl, config.subscription?.autoUpdate?.dayMode || 'daily');
   renderSubAutoUpdateMode();
   renderDnsPresetUi();
 }
@@ -1853,10 +1859,10 @@ saveSubAutoUpdateButton?.addEventListener('click', () => {
     cfg.subscription.autoUpdate = cfg.subscription.autoUpdate || {};
     cfg.subscription.autoUpdate.items = cfg.subscription.autoUpdate.items || [];
     cfg.subscription.autoUpdate.items[activeSubscriptionAutoConfigIndex] = {
-      mode: subAutoModeEl.value,
-      intervalMinutes: Number(subAutoIntervalEl.value || 60),
-      time: subAutoTimeEl.value || '03:00',
-      dayMode: subAutoDayModeEl.value || 'daily'
+      mode: subAutoModeEl?.value || 'interval',
+      intervalMinutes: Number(subAutoIntervalEl?.value || 60),
+      time: subAutoTimeEl?.value || '03:00',
+      dayMode: subAutoDayModeEl?.value || 'daily'
     };
     editor.value = JSON.stringify(cfg, null, 2);
     fillForm(cfg);
@@ -2036,10 +2042,10 @@ document.addEventListener('click', (event) => {
     const parsed = parseFormConfig(false);
     const cfg = parsed.ok ? parsed.value : (latestData.config || {});
     const itemCfg = cfg.subscription?.autoUpdate?.items?.[activeSubscriptionAutoConfigIndex] || {};
-    subAutoModeEl.value = itemCfg.mode || cfg.subscription?.autoUpdate?.mode || 'interval';
-    subAutoIntervalEl.value = itemCfg.intervalMinutes || cfg.subscription?.autoUpdate?.intervalMinutes || 60;
-    subAutoTimeEl.value = itemCfg.time || cfg.subscription?.autoUpdate?.time || '03:00';
-    subAutoDayModeEl.value = itemCfg.dayMode || cfg.subscription?.autoUpdate?.dayMode || 'daily';
+    setVal(subAutoModeEl, itemCfg.mode || cfg.subscription?.autoUpdate?.mode || 'interval');
+    setVal(subAutoIntervalEl, itemCfg.intervalMinutes || cfg.subscription?.autoUpdate?.intervalMinutes || 60);
+    setVal(subAutoTimeEl, itemCfg.time || cfg.subscription?.autoUpdate?.time || '03:00');
+    setVal(subAutoDayModeEl, itemCfg.dayMode || cfg.subscription?.autoUpdate?.dayMode || 'daily');
     showSubAutoUpdateOverlay();
   }
 
