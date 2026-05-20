@@ -124,9 +124,7 @@ const subscriptionUrlsEl = document.getElementById('subscription-urls');
 const addSubscriptionUrlButton = document.getElementById('add-subscription-url');
 const openSubAutoUpdateButton = document.getElementById('open-sub-auto-update');
 const kernelVersionSelect = document.getElementById('kernel-version-select');
-const kernelSelectVersionButton = document.getElementById('kernel-select-version');
 const kernelArchSelect = document.getElementById('kernel-arch-select');
-const kernelCheckUpdatesButton = document.getElementById('kernel-check-updates');
 const dnsRemoteUrlWrap = document.getElementById('field-dns-remote-url-wrap');
 const dnsBootstrapWrap = document.getElementById('field-dns-bootstrap-wrap');
 const socksConfigOverlay = document.getElementById('socks-config-overlay');
@@ -353,7 +351,6 @@ function renderKernelVersionOptions() {
     option.textContent = '请先检测架构';
     kernelVersionSelect.appendChild(option);
     kernelVersionSelect.disabled = true;
-    kernelSelectVersionButton.disabled = true;
     return;
   }
 
@@ -371,7 +368,6 @@ function renderKernelVersionOptions() {
   selectedKernelVersion = kernelVersionSelect.value;
 
   kernelVersionSelect.disabled = false;
-  kernelSelectVersionButton.disabled = false;
 }
 
 function renderRouteFinalOptions() {
@@ -1633,12 +1629,12 @@ async function refreshAfterNodesUpdate() {
   }
 }
 
-document.getElementById('save-config').onclick = () => action('保存配置', async () => {
+document.getElementById('save-config')?.addEventListener('click', () => action('保存配置', async () => {
   await saveCurrentConfigIfNeeded(true);
   setStatus('配置已保存并自动更新 sing-box 配置', 'success');
 });
 
-document.getElementById('refresh-sub').onclick = () => action('更新订阅', async () => {
+document.getElementById('refresh-sub')?.addEventListener('click', () => action('更新订阅', async () => {
   const saveResult = await saveCurrentConfigIfNeeded(false);
   if (saveResult.saved) {
     setStatus('检测到未保存配置，已先保存配置', 'success');
@@ -1662,29 +1658,14 @@ document.getElementById('kernel-check')?.addEventListener('click', () => action(
   await Promise.all([api('/api/kernel/status'), api('/api/kernel/releases')]);
 }));
 
-kernelCheckUpdatesButton.onclick = () => action('检查版本更新', async () => {
-  await post('/api/kernel/releases/update');
-});
-
-kernelSelectVersionButton.onclick = () => action('设为计划版本', async () => {
-  await applySelectedArchitectureAndLoadReleases();
-  if (!kernelVersionSelect.value) throw new Error('请先选择一个内核版本');
-  selectedKernelVersion = kernelVersionSelect.value;
-  kernelArchManuallySelected = false;
-  await post('/api/kernel/plan', {
-    version: kernelVersionSelect.value,
-    assetSuffix: selectedKernelArch || kernelArchSelect.value
-  });
-});
-
-document.getElementById('kernel-download').onclick = async () => {
+document.getElementById('kernel-download')?.addEventListener('click', async () => {
   try {
     setStatus('开始拉取 sing-box 内核...', 'loading');
     await startDownloadFlow();
   } catch (error) {
     setStatus(`拉取 sing-box 内核失败：${error.message}`, 'error');
   }
-};
+});
 
 manageNodesButton?.addEventListener('click', () => {
   window.location.href = '/nodes.html';
