@@ -6,3 +6,5 @@ internal/data/
 internal/runtime/
 internal/bin
 .claude/
+.env
+.env.local

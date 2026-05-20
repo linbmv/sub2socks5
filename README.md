@@ -392,108 +392,126 @@ curl.exe --socks5-hostname 127.0.0.1:53456 --max-time 25 https://www.gstatic.com
 
 Docker 镜像内置 sub2socks5 主程序与 sing-box 默认内核（首次启动会 seed 到挂载卷的 `internal/bin/sing-box`）。`data`、`runtime`、`bin` 三个目录通过 bind mount 持久化。容器启动目录固定为 `/app`，匹配程序基于工作目录解析 `internal/{data,runtime,bin}` 的行为；也可以通过 `SUB2SOCKS5_ROOT` 改用任意路径。
 
+仓库提供**单文件 compose + `.env` 驱动**，覆盖 4 种部署模式。
+
 ### 快速开始
 
-在 VPS 上安装 Docker Engine 和 Docker Compose v2 后，进入项目目录执行：
+在 VPS 上安装 Docker Engine 和 Docker Compose v2 后：
 
 ```bash
 git clone https://github.com/sglinhome/sub2socks5.git
 cd sub2socks5
 mkdir -p data runtime bin
 sudo chown -R 10001:10001 data runtime bin
+cp .env.example .env
+# 按需编辑 .env，最简场景（仅本机）保持默认即可
 docker compose up -d --build
 docker compose logs -f sub2socks5
 ```
 
-默认 compose 使用 bridge 网络，并且只把 Web UI 与 SOCKS5 端口绑定到宿主机 `127.0.0.1`。Web UI 当前没有登录认证，响应头允许宽松 CORS，因此不要把 `18080` 暴露到公网。远程管理时使用 SSH 隧道（在本机执行）：
+默认仅本机访问：`http://127.0.0.1:18080`。
+
+### 部署模式（由 `.env` 切换）
+
+| 模式 | 关键变量 | 访问方式 |
+|---|---|---|
+| **A 仅本机** | 全部默认 | `http://127.0.0.1:18080` |
+| **B LAN 共享** | `WEBUI_BIND=0.0.0.0` + `AUTH_TOKEN` + `ALLOWED_HOSTS=<lan-ip>` | `http://<lan-ip>:18080` |
+| **C CF Tunnel（自起）** | `AUTH_TOKEN` + `ALLOWED_HOSTS=<回源域名>` + `CF_TUNNEL_TOKEN` | `https://<回源域名>` |
+| **D CF Tunnel（外部）** | `AUTH_TOKEN` + `ALLOWED_HOSTS=<回源域名>` + `EXTERNAL_NETWORK=<网络名>` | `https://<回源域名>` |
+
+启动命令：
 
 ```bash
-ssh -L 18080:127.0.0.1:18080 user@your-vps
-```
+# A / B / D 直接启动
+docker compose up -d --build
 
-随后在本机浏览器访问：
-
-```text
-http://127.0.0.1:18080
+# C 自起 cloudflared 容器（需启用 cf-tunnel profile）
+docker compose --profile cf-tunnel up -d --build
 ```
 
 ### 首次配置
 
 第一次进入 Web UI 后按以下顺序操作：
 
-1. 在内核管理页面获取 release 列表，并下载匹配当前容器架构的 sing-box 内核。首次下载约 30 秒，结果会持久化到挂载的 `./bin` 目录。
+1. 在内核管理页面获取 release 列表，并下载匹配当前容器架构的 sing-box 内核。
 2. 更新订阅，或在节点管理页导入手动节点。
-3. 保存配置后启动运行时；运行中保存配置会通过重启 sing-box 应用新配置。
+3. 给每个 SOCKS5 服务配置监听地址、端口、目标出口，**公网暴露的端口务必添加 `username/password` 鉴权用户**。
+4. 保存配置后启动运行时。
 
-> ⚠️ **关键配置（bridge 模式必备，新手最容易遗漏）**
+> ⚠️ **bridge 模式 SOCKS5 配置（最容易遗漏）**
 >
-> 1. **监听地址**：配置 SOCKS5 服务时，必须把监听地址从默认的 `127.0.0.1` 改为 `0.0.0.0`，否则容器外完全无法连接。
-> 2. **端口范围**：bridge 模式下端口必须落在 `18081-18100` 范围内，否则 Docker 没有发布对应的宿主端口。如需更多端口，修改 `docker-compose.yml` 的 `ports` 段并同步 `Dockerfile` 的 `EXPOSE` 段。
+> 1. **监听地址** 必须从默认的 `127.0.0.1` 改为 `0.0.0.0`，否则容器外完全无法连接。
+> 2. **端口范围** 必须落在 `18081-18100` 内（compose 默认发布范围）。如需扩展，同步改 compose `ports` 段和 `Dockerfile` 的 `EXPOSE`。
+> 3. **公网暴露** 必须配置 `username/password` 鉴权用户（在服务卡片中添加），否则任何人可白嫖代理。
 
-这里的 `0.0.0.0` 只表示监听容器内所有网卡。默认 compose 已把宿主机发布地址限制为 `127.0.0.1`，不会直接暴露给公网。
-
-### 从本地客户端连接 VPS 上的 SOCKS5
-
-默认 compose 把 SOCKS5 端口绑定到 VPS 的 `127.0.0.1`，公网无法直接访问。推荐使用 SSH 隧道访问（在本地执行，假设 SOCKS5 端口为 `18081`）：
+### 从本地客户端连接 SOCKS5
 
 ```bash
+# SSH 隧道方式（仅本机模式）
 ssh -L 18081:127.0.0.1:18081 user@your-vps
-curl --socks5-hostname 127.0.0.1:18081 \
-     --max-time 25 https://www.google.com/generate_204 \
-     -I -s -o /dev/null -w "%{http_code}\n"
+curl --socks5-hostname 127.0.0.1:18081 https://www.google.com/generate_204 -I
+
+# 公网直连（需在 Web UI 配置 username/password 用户）
+curl --proxy socks5://user:pass@your-vps.example.com:18081 https://ifconfig.me
 ```
 
-预期输出：
+### CF Tunnel 模式说明
 
-```text
-204
-```
+#### 模式 C：本仓库自起 `cloudflared` 容器
 
-如果确需把 SOCKS5 端口开放给固定来源公网客户端，必须把 compose 中对应端口的宿主绑定从 `127.0.0.1` 改为 `0.0.0.0`（或具体的公网网卡 IP），并配合云厂商安全组与防火墙白名单。改动后再用 `vps.example.com:18081` 替换上面的 `127.0.0.1` 进行连通性验证。
+1. [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) → **Networks → Tunnels → Create a tunnel**
+2. 选 Docker，复制弹出的 token (`eyJhIjoi...`) 填入 `.env` 的 `CF_TUNNEL_TOKEN`
+3. Tunnel **Public Hostname** 添加：
+   - Subdomain：任意（例如 `sub2socks5`）
+   - Domain：你的域名
+   - Service Type：`HTTP`
+   - URL：`sub2socks5:18080`
+4. `.env` 同时填好 `SUB2SOCKS5_AUTH_TOKEN` + `SUB2SOCKS5_ALLOWED_HOSTS=<回源域名>`
+5. `docker compose --profile cf-tunnel up -d --build`
+
+#### 模式 D：复用已有外部 `cloudflared` 容器
+
+适合你已经在跑独立的 `cloudflared`（多个项目共享）的场景。
+
+1. `docker network ls` 找到 cloudflared 所在的 docker network 名
+2. `.env` 设 `EXTERNAL_NETWORK=<网络名>`（不要设 `CF_TUNNEL_TOKEN`，避免重复起 cloudflared）
+3. 在已有 Tunnel 的 **Public Hostname** 添加 URL：`http://sub2socks5:18080`
+4. `.env` 填好 `SUB2SOCKS5_AUTH_TOKEN` + `SUB2SOCKS5_ALLOWED_HOSTS=<回源域名>`
+5. `docker compose up -d --build`
+
+> 🛡️ **CF Tunnel 模式的安全模型**
+>
+> - Web UI 经 CF 反代，VPS 不开放 18080 端口；CF 自动注入 `X-Forwarded-Proto=https`，cookie `Secure` 标志自动启用
+> - SOCKS5 直连 VPS（CF Tunnel 免费版不支持 TCP）；**必须** 给每个端口配 `username/password`
+> - 建议 VPS 防火墙限制 SOCKS5 端口来源 IP
 
 ### 防火墙建议
 
-生产 VPS 上应默认拒绝公网访问 Web UI。即使以后通过反向代理访问，也必须先在反向代理层增加认证、访问源限制或 VPN 保护。
-
-如果使用 `ufw`，可以按固定来源 IP 开放 SOCKS5 端口范围：
+生产 VPS 默认拒绝公网访问 Web UI（CF Tunnel 模式不需要在 VPS 开 18080）：
 
 ```bash
 sudo ufw deny 18080/tcp
-sudo ufw allow from <你的固定公网 IP> to any port 18081:18100 proto tcp
+sudo ufw allow from <可信 IP> to any port 18081:18100 proto tcp
 sudo ufw reload
 ```
 
-如果只在服务器本机或 SSH 隧道中使用代理，不需要开放 `18081-18100` 到公网。云厂商安全组同样应仅放行 SSH 端口与必要的 SOCKS5 端口范围。
-
-### host 模式
-
-需要频繁动态新增 SOCKS5 端口时，可以使用 host 网络模式（仅 Linux 支持）：
-
-```bash
-docker compose -f docker-compose.host.yml up -d --build
-```
-
-host 模式下 Docker 不再做端口映射，sing-box 监听的端口会直接出现在 VPS 网络命名空间中。
-
-> 🚨 **host 模式默认安全策略**
->
-> 镜像通过 `SUB2SOCKS5_HOST=127.0.0.1` 环境变量强制 Web UI 只监听 loopback，远程访问必须经 SSH 隧道。若要开放 Web UI 到其他来源，请同时启用 `SUB2SOCKS5_AUTH_TOKEN` 鉴权并配合反向代理 / IP 白名单 / VPN。
->
-> SOCKS5 端口仍由用户在 Web UI 内按需配置 `0.0.0.0`；防火墙/云厂商安全组必须限定来源 IP。
-
 ### 环境变量
-
-镜像支持以下可选环境变量。所有变量均为可选；未设置时使用程序默认值，向后兼容。
 
 | 变量 | 作用 | 默认值 |
 |------|------|--------|
-| `SUB2SOCKS5_ROOT` | 覆盖运行根目录（`internal/{data,runtime,bin}` 的父目录） | 容器启动目录 `/app` |
-| `SUB2SOCKS5_HOST` | 覆盖 Web UI 监听地址 | 配置文件 `app.host`（默认 `0.0.0.0`） |
-| `SUB2SOCKS5_PORT` | 覆盖 Web UI 监听端口 | 配置文件 `app.port`（默认 `18080`） |
-| `SUB2SOCKS5_SING_BOX_BINARY` | 直接指向已有 sing-box 二进制路径 | 配置文件 `app.singBoxBinary` 或 `internal/bin/sing-box` |
-| `SUB2SOCKS5_AUTH_TOKEN` | 启用 Web UI Bearer Token 鉴权 | 未设置时鉴权关闭 |
-| `SUB2SOCKS5_DEPLOYMENT_HINT` | Web UI 顶部部署模式横幅文本（格式 `info\|message` 或 `warning\|message`） | 不显示横幅 |
-| `SUB2SOCKS5_EXTERNAL_HOST` | 导出/复制 SOCKS5 时把监听 `0.0.0.0`/`::` 替换为该地址 | 保留原 `listen` 字段 |
+| `SUB2SOCKS5_ROOT` | 覆盖运行根目录 | 容器启动目录 `/app` |
+| `SUB2SOCKS5_HOST` | Web UI 监听地址 | 配置文件 `app.host`（默认 `127.0.0.1`） |
+| `SUB2SOCKS5_PORT` | Web UI 监听端口 | 配置文件 `app.port`（默认 `18080`） |
+| `SUB2SOCKS5_SING_BOX_BINARY` | 指向已有 sing-box 二进制 | 配置文件 `app.singBoxBinary` |
+| `SUB2SOCKS5_AUTH_TOKEN` | 启用 Web UI 鉴权（公网部署必填） | 未设置时鉴权关闭 |
+| `SUB2SOCKS5_ALLOWED_HOSTS` | 鉴权启用时的 Host 头白名单（防 DNS rebinding），逗号分隔 | `localhost,127.0.0.1,::1` |
+| `SUB2SOCKS5_DEPLOYMENT_HINT` | Web UI 顶部部署横幅（`level\|message`） | 不显示 |
+| `SUB2SOCKS5_EXTERNAL_HOST` | 复制 SOCKS5 时把 `0.0.0.0`/`::` 替换为该地址 | 保留原 `listen` |
+| `WEBUI_BIND` | compose 中 Web UI 端口绑定接口 | `127.0.0.1` |
+| `SOCKS5_BIND` | compose 中 SOCKS5 端口绑定接口 | `0.0.0.0` |
+| `CF_TUNNEL_TOKEN` | CF Tunnel 模式 C 用，自起 cloudflared | 空 |
+| `EXTERNAL_NETWORK` | CF Tunnel 模式 D 用，加入外部 docker network | `sub2socks5_default` |
 
 ### Web UI 鉴权（可选）
 
