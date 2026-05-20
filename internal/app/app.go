@@ -3,10 +3,11 @@ package app
 import (
 	"archive/tar"
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -19,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path"
 	"path/filepath"
 	"reflect"
@@ -28,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -49,6 +52,9 @@ type App struct {
 	publicDir           string
 	staticFS            fs.FS
 	autoUpdateLastRun   map[string]time.Time
+	sessions            map[string]time.Time
+	loginAttempts       map[string][]time.Time
+	tokenHash           []byte
 }
 
 func Run() error {
@@ -78,6 +84,13 @@ func RunWithStaticFS(staticFS fs.FS) error {
 		releaseList:       []any{},
 		downloadState:     map[string]any{"active": false, "steps": []any{}, "progress": nil, "updatedAt": nil},
 		autoUpdateLastRun: map[string]time.Time{},
+		sessions:          map[string]time.Time{},
+		loginAttempts:     map[string][]time.Time{},
+	}
+	token := strings.TrimSpace(os.Getenv("SUB2SOCKS5_AUTH_TOKEN"))
+	if token != "" {
+		h := sha256.Sum256([]byte(token))
+		app.tokenHash = h[:]
 	}
 	must(os.MkdirAll(app.dataDir, 0o755))
 	must(os.MkdirAll(app.runtimeDir, 0o755))
@@ -137,7 +150,37 @@ func RunWithStaticFS(staticFS fs.FS) error {
 	}
 	addr := fmt.Sprintf("%s:%d", host, port)
 	fmt.Printf("Web UI listening on http://%s\n", addr)
-	return http.ListenAndServe(addr, withAuth(withCORS(mux)))
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           app.withAuth(withCORS(mux)),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	idleConnsClosed := make(chan struct{})
+	go func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+		sig := <-sigChan
+		fmt.Printf("\nReceived signal %v, shutting down gracefully...\n", sig)
+		// 1. 停止 sing-box 子进程
+		app.mu.Lock()
+		app.manualStopRequested = true
+		if app.proc != nil && app.proc.Process != nil {
+			_ = app.proc.Process.Kill()
+		}
+		app.mu.Unlock()
+		// 2. 关闭 HTTP 服务器（30s 超时给现有请求收尾）
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "HTTP shutdown error: %v\n", err)
+		}
+		close(idleConnsClosed)
+	}()
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return err
+	}
+	<-idleConnsClosed
+	return nil
 }
 
 func (a *App) runSubscriptionAutoUpdateScheduler() {
@@ -167,6 +210,7 @@ func (a *App) runSubscriptionAutoUpdateLocked(now time.Time) {
 			return
 		}
 		a.autoUpdateLastRun["simultaneous"] = now
+		a.persistAutoUpdateLastRunLocked()
 		a.appendRuntimeLog("auto update completed (simultaneous)")
 		return
 	}
@@ -200,6 +244,7 @@ func (a *App) runSubscriptionAutoUpdateLocked(now time.Time) {
 		}
 		if updated {
 			_ = writeJSON(filepath.Join(a.dataDir, "subscription-state.json"), a.subState)
+			a.persistAutoUpdateLastRunLocked()
 		}
 	}
 }
@@ -402,7 +447,27 @@ func (a *App) loadOrInit() error {
 		}
 	}
 
+	autoUpdatePath := filepath.Join(a.dataDir, "auto-update-last-run.json")
+	if b, err := os.ReadFile(autoUpdatePath); err == nil {
+		var stored map[string]string
+		if json.Unmarshal(b, &stored) == nil {
+			for k, v := range stored {
+				if t, err := time.Parse(time.RFC3339, v); err == nil {
+					a.autoUpdateLastRun[k] = t
+				}
+			}
+		}
+	}
+
 	return nil
+}
+
+func (a *App) persistAutoUpdateLastRunLocked() {
+	stored := map[string]string{}
+	for k, v := range a.autoUpdateLastRun {
+		stored[k] = v.Format(time.RFC3339)
+	}
+	_ = writeJSON(filepath.Join(a.dataDir, "auto-update-last-run.json"), stored)
 }
 
 func (a *App) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -562,19 +627,60 @@ func (a *App) handleNodesCheck(w http.ResponseWriter, r *http.Request) {
 	if urlToTest == "" {
 		urlToTest = "https://www.gstatic.com/generate_204"
 	}
+	allowedTestURLs := []string{
+		"https://www.gstatic.com/generate_204",
+		"https://cp.cloudflare.com/generate_204",
+		"https://www.google.com/generate_204",
+		"http://www.gstatic.com/generate_204",
+	}
+	allowed := false
+	for _, u := range allowedTestURLs {
+		if urlToTest == u {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		fail(w, 400, "测速 URL 必须在白名单内")
+		return
+	}
 	timeout := int(toFloat(body["timeoutMs"]))
 	if timeout <= 0 {
 		timeout = 5000
 	}
-	results := map[string]any{}
+
+	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(len(tags)*(timeout+500))*time.Millisecond)
+	defer cancel()
+
+	results := make(map[string]any)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 10)
+
 	for _, tag := range tags {
-		delay, err := measureProxyDelay(tag, urlToTest, timeout)
-		if err != nil {
-			results[tag] = map[string]any{"ok": false, "text": "失败", "error": err.Error(), "checkedAt": time.Now().Format(time.RFC3339), "checkedTag": tag}
-			continue
-		}
-		results[tag] = map[string]any{"ok": true, "delay": delay, "text": fmt.Sprintf("%d ms", delay), "checkedAt": time.Now().Format(time.RFC3339), "checkedTag": tag}
+		wg.Add(1)
+		go func(t string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				mu.Lock()
+				results[t] = map[string]any{"ok": false, "text": "超时", "error": "context canceled", "checkedAt": time.Now().Format(time.RFC3339), "checkedTag": t}
+				mu.Unlock()
+				return
+			}
+			delay, err := measureProxyDelay(t, urlToTest, timeout)
+			mu.Lock()
+			if err != nil {
+				results[t] = map[string]any{"ok": false, "text": "失败", "error": err.Error(), "checkedAt": time.Now().Format(time.RFC3339), "checkedTag": t}
+			} else {
+				results[t] = map[string]any{"ok": true, "delay": delay, "text": fmt.Sprintf("%d ms", delay), "checkedAt": time.Now().Format(time.RFC3339), "checkedTag": t}
+			}
+			mu.Unlock()
+		}(tag)
 	}
+	wg.Wait()
 	ok(w, map[string]any{"ok": true, "url": urlToTest, "timeoutMs": timeout, "results": results})
 }
 
@@ -661,33 +767,37 @@ func (a *App) startRuntimeLocked() error {
 	a.appendRuntimeLog("sing-box started")
 	go a.captureLogs(stdout)
 	go a.captureLogs(stderr)
-	go func(c *exec.Cmd) {
+	go func(c *exec.Cmd, startTime time.Time) {
 		waitErr := c.Wait()
 		a.mu.Lock()
-		if a.proc == c {
-			a.proc = nil
-			a.runtimeInfo["state"] = "stopped"
-			a.runtimeInfo["running"] = false
-			a.runtimeInfo["pid"] = 0
-			if waitErr != nil {
-				a.runtimeInfo["lastError"] = waitErr.Error()
-				a.appendRuntimeLog("sing-box exited with error: " + waitErr.Error())
-			} else {
-				a.appendRuntimeLog("sing-box exited")
-			}
-			if !a.manualStopRequested {
-				a.autoRestartAttempts += 1
-				attempt := a.autoRestartAttempts
-				delay := time.Duration(attempt*2) * time.Second
-				if delay > 30*time.Second {
-					delay = 30 * time.Second
-				}
-				a.appendRuntimeLog(fmt.Sprintf("runtime stopped unexpectedly, auto-restart in %ds (attempt %d)", int(delay/time.Second), attempt))
-				go a.autoRestartAfter(delay)
-			}
+		defer a.mu.Unlock()
+		if a.proc != c {
+			return
 		}
-		a.mu.Unlock()
-	}(cmd)
+		a.proc = nil
+		a.runtimeInfo["state"] = "stopped"
+		a.runtimeInfo["running"] = false
+		a.runtimeInfo["pid"] = 0
+		if waitErr != nil {
+			a.runtimeInfo["lastError"] = waitErr.Error()
+			a.appendRuntimeLog("sing-box exited with error: " + waitErr.Error())
+		} else {
+			a.appendRuntimeLog("sing-box exited")
+		}
+		if time.Since(startTime) > 60*time.Second {
+			a.autoRestartAttempts = 0
+		}
+		if !a.manualStopRequested {
+			a.autoRestartAttempts += 1
+			attempt := a.autoRestartAttempts
+			delay := time.Duration(attempt*2) * time.Second
+			if delay > 30*time.Second {
+				delay = 30 * time.Second
+			}
+			a.appendRuntimeLog(fmt.Sprintf("runtime stopped unexpectedly, auto-restart in %ds (attempt %d)", int(delay/time.Second), attempt))
+			go a.autoRestartAfter(delay)
+		}
+	}(cmd, time.Now())
 	return nil
 }
 
@@ -974,28 +1084,15 @@ func (a *App) appendRuntimeLog(msg string) {
 
 func (a *App) captureLogs(r io.ReadCloser) {
 	defer r.Close()
-	buf := make([]byte, 4096)
-	acc := ""
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			acc += string(buf[:n])
-			for {
-				i := strings.IndexAny(acc, "\r\n")
-				if i < 0 {
-					break
-				}
-				line := strings.TrimSpace(acc[:i])
-				acc = strings.TrimLeft(acc[i+1:], "\r\n")
-				if line != "" {
-					a.mu.Lock()
-					a.appendRuntimeLog(line)
-					a.mu.Unlock()
-				}
-			}
-		}
-		if err != nil {
-			break
+	scanner := bufio.NewScanner(r)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1<<20)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			a.mu.Lock()
+			a.appendRuntimeLog(line)
+			a.mu.Unlock()
 		}
 	}
 }
@@ -1081,8 +1178,17 @@ func (a *App) handleNodesEgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(len(tags)*(timeout+500))*time.Millisecond)
+	defer cancel()
+
 	results := map[string]any{}
 	for _, tag := range tags {
+		select {
+		case <-ctx.Done():
+			results[tag] = map[string]any{"ok": false, "error": "context canceled"}
+			continue
+		default:
+		}
 		if err := clashSelectProxy("proxy", tag, timeout); err != nil {
 			results[tag] = map[string]any{"ok": false, "error": err.Error()}
 			continue
@@ -1365,9 +1471,11 @@ func (a *App) downloadKernel(release map[string]any) (map[string]any, error) {
 	a.mu.Lock()
 	a.pushDownloadStepLocked("prepare", "Download workspace ready", map[string]any{"assetName": assetName})
 	a.mu.Unlock()
-	req, _ := http.NewRequest(http.MethodGet, urlStr, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
 	req.Header.Set("user-agent", "sub2socks5-go/0.1.0")
-	resp, err := (&http.Client{Timeout: 0}).Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -1447,10 +1555,17 @@ func (a *App) downloadKernel(release map[string]any) (map[string]any, error) {
 	if err := os.WriteFile(binTarget, b, 0o755); err != nil {
 		return nil, err
 	}
+	binSum := sha256.Sum256(b)
+	archiveBytes, _ := os.ReadFile(archivePath)
+	archiveSum := sha256.Sum256(archiveBytes)
 	a.mu.Lock()
 	a.pushDownloadStepLocked("install", "Installing kernel binary", map[string]any{"binaryTarget": binTarget})
 	a.mu.Unlock()
-	_ = writeJSON(filepath.Join(a.binDir, "sing-box-version.json"), release)
+	releaseWithSum := cloneMap(release)
+	releaseWithSum["binarySha256"] = hex.EncodeToString(binSum[:])
+	releaseWithSum["archiveSha256"] = hex.EncodeToString(archiveSum[:])
+	releaseWithSum["installedAt"] = time.Now().Format(time.RFC3339)
+	_ = writeJSON(filepath.Join(a.binDir, "sing-box-version.json"), releaseWithSum)
 	a.mu.Lock()
 	appCfg := getMap(a.cfg, "app")
 	appCfg["singBoxBinary"] = filepath.ToSlash(filepath.Join("internal", "bin", exe))
@@ -1532,6 +1647,10 @@ func extractZip(archivePath, extractDir string) error {
 	defer zr.Close()
 	for _, f := range zr.File {
 		dest := filepath.Join(extractDir, filepath.Clean(f.Name))
+		rel, err := filepath.Rel(extractDir, dest)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			return fmt.Errorf("zip slip detected: %s", f.Name)
+		}
 		if f.FileInfo().IsDir() {
 			if err := os.MkdirAll(dest, 0o755); err != nil {
 				return err
@@ -1578,6 +1697,10 @@ func extractTarGz(archivePath, extractDir string) error {
 			return err
 		}
 		dest := filepath.Join(extractDir, filepath.Clean(hdr.Name))
+		rel, err := filepath.Rel(extractDir, dest)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			return fmt.Errorf("tar slip detected: %s", hdr.Name)
+		}
 		if hdr.FileInfo().IsDir() {
 			if err := os.MkdirAll(dest, 0o755); err != nil {
 				return err
@@ -1651,10 +1774,30 @@ func fetchSubscription(sub map[string]any) map[string]any {
 	}
 
 	warnings := []any{}
+	for _, u := range urls {
+		if err := validateSubscriptionURL(u); err != nil {
+			warnings = append(warnings, fmt.Sprintf("订阅地址不安全: %s (%v)", u, err))
+		}
+	}
+	if len(warnings) > 0 {
+		return map[string]any{"nodes": []any{}, "raw": "", "warnings": warnings}
+	}
+
 	rawParts := []string{}
 	nodes := []map[string]any{}
 	filters := getSlice(sub, "filters")
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return fmt.Errorf("too many redirects")
+			}
+			if err := validateSubscriptionURL(req.URL.String()); err != nil {
+				return fmt.Errorf("redirect to unsafe URL: %w", err)
+			}
+			return nil
+		},
+	}
 	for idx, u := range urls {
 		req, _ := http.NewRequest(http.MethodGet, u, nil)
 		req.Header.Set("user-agent", getString(sub, "userAgent", "sub2socks5-go/0.1.0"))
@@ -1663,7 +1806,7 @@ func fetchSubscription(sub map[string]any) map[string]any {
 			warnings = append(warnings, fmt.Sprintf("订阅拉取失败: %s %v", u, err))
 			continue
 		}
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 		_ = resp.Body.Close()
 		if resp.StatusCode >= 400 {
 			warnings = append(warnings, fmt.Sprintf("订阅拉取失败: %s HTTP %d", u, resp.StatusCode))
@@ -1695,6 +1838,32 @@ func fetchSubscription(sub map[string]any) map[string]any {
 		}
 	}
 	return map[string]any{"nodes": dedupeNodes(nodes), "raw": strings.Join(rawParts, "\n\n"), "warnings": warnings}
+}
+
+func validateSubscriptionURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("only http(s) allowed, got: %s", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("missing host")
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		ips, err := net.LookupIP(host)
+		if err != nil || len(ips) == 0 {
+			return nil
+		}
+		ip = ips[0]
+	}
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return fmt.Errorf("private/loopback IP not allowed: %s", ip)
+	}
+	return nil
 }
 
 func shouldKeepNodeByFilter(node map[string]any, mode string, keywords []string) bool {
@@ -2455,7 +2624,7 @@ func collectOutbounds(cfg, sub map[string]any) []any {
 func defaultConfig() map[string]any {
 	exe := filepath.ToSlash(filepath.Join("internal", "bin", map[bool]string{true: "sing-box.exe", false: "sing-box"}[runtime.GOOS == "windows"]))
 	return map[string]any{
-		"app":          map[string]any{"host": "0.0.0.0", "port": 18080, "singBoxBinary": exe, "autoStart": false, "autoConfigureOnSubscription": false, "logLevel": "info"},
+		"app":          map[string]any{"host": "127.0.0.1", "port": 18080, "singBoxBinary": exe, "autoStart": false, "autoConfigureOnSubscription": false, "logLevel": "info"},
 		"subscription": map[string]any{"url": "", "urls": []any{}, "format": "raw", "userAgent": "sub2socks5/0.1.0", "refreshIntervalMinutes": 60, "headers": map[string]any{}},
 		"dns":          map[string]any{"strategy": "prefer_ipv4", "remotePreset": "cloudflare", "remoteUrl": "https://cloudflare-dns.com/dns-query", "bootstrapServer": "1.1.1.1"},
 		"routing":      map[string]any{"routeFinal": "proxy", "autoDetectInterface": true, "ruleSetUrls": []any{}, "rules": []any{map[string]any{"action": "sniff"}}},
@@ -2465,6 +2634,8 @@ func defaultConfig() map[string]any {
 	}
 }
 
+// findPort 扫描可用端口。注意：存在 TOCTOU 竞态（返回后到实际 bind 之间可能被占用）。
+// 实际使用时应由 sing-box 进程自己 bind，失败时重试或报错。
 func findPort(host string, start int) int {
 	for p := start; p <= 65535; p++ {
 		l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, p))
@@ -2497,154 +2668,6 @@ func deploymentHint() map[string]any {
 	}
 	return map[string]any{"level": level, "message": message}
 }
-
-func withAuth(next http.Handler) http.Handler {
-	token := strings.TrimSpace(os.Getenv("SUB2SOCKS5_AUTH_TOKEN"))
-	if token == "" {
-		return next
-	}
-	expected := []byte(token)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 公开端点：登录页本身、登录页样式资源、auth 三个 API
-		if isAuthPublicPath(r.URL.Path) {
-			next.ServeHTTP(w, r)
-			return
-		}
-		provided := ""
-		if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-			provided = strings.TrimPrefix(h, "Bearer ")
-		}
-		if provided == "" {
-			if c, err := r.Cookie("sub2socks5_token"); err == nil {
-				provided = c.Value
-			}
-		}
-		if provided == "" {
-			if q := r.URL.Query().Get("token"); q != "" {
-				if subtle.ConstantTimeCompare([]byte(q), expected) == 1 {
-					setAuthCookie(w, q)
-					qs := r.URL.Query()
-					qs.Del("token")
-					redirect := r.URL.Path
-					if encoded := qs.Encode(); encoded != "" {
-						redirect = redirect + "?" + encoded
-					}
-					http.Redirect(w, r, redirect, http.StatusSeeOther)
-					return
-				}
-				provided = q
-			}
-		}
-		if subtle.ConstantTimeCompare([]byte(provided), expected) != 1 {
-			// 浏览器请求 → 跳登录页；API/AJAX 请求 → 401 JSON
-			if isBrowserNavigation(r) {
-				next := r.URL.Path
-				if r.URL.RawQuery != "" {
-					next += "?" + r.URL.RawQuery
-				}
-				http.Redirect(w, r, "/login?next="+url.QueryEscape(next), http.StatusSeeOther)
-				return
-			}
-			w.Header().Set("WWW-Authenticate", `Bearer realm="sub2socks5"`)
-			w.Header().Set("content-type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": "Unauthorized", "status": 401}})
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func isAuthPublicPath(p string) bool {
-	switch p {
-	case "/login", "/login.html", "/style.css",
-		"/api/auth/status", "/api/auth/login", "/api/auth/logout":
-		return true
-	}
-	return false
-}
-
-func isBrowserNavigation(r *http.Request) bool {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		return false
-	}
-	accept := r.Header.Get("Accept")
-	return strings.Contains(accept, "text/html")
-}
-
-func setAuthCookie(w http.ResponseWriter, value string) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     "sub2socks5_token",
-		Value:    value,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
-}
-
-func (a *App) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		methodNotAllowed(w, "GET")
-		return
-	}
-	enabled := strings.TrimSpace(os.Getenv("SUB2SOCKS5_AUTH_TOKEN")) != ""
-	authed := false
-	if enabled {
-		token := []byte(strings.TrimSpace(os.Getenv("SUB2SOCKS5_AUTH_TOKEN")))
-		if c, err := r.Cookie("sub2socks5_token"); err == nil {
-			authed = subtle.ConstantTimeCompare([]byte(c.Value), token) == 1
-		}
-		if !authed {
-			if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-				authed = subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(h, "Bearer ")), token) == 1
-			}
-		}
-	}
-	ok(w, map[string]any{"enabled": enabled, "authenticated": authed || !enabled})
-}
-
-func (a *App) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w, "POST")
-		return
-	}
-	expected := strings.TrimSpace(os.Getenv("SUB2SOCKS5_AUTH_TOKEN"))
-	if expected == "" {
-		fail(w, http.StatusBadRequest, "鉴权未启用")
-		return
-	}
-	var body struct {
-		Token string `json:"token"`
-	}
-	if err := decodeJSON(r.Body, &body); err != nil {
-		fail(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if subtle.ConstantTimeCompare([]byte(body.Token), []byte(expected)) != 1 {
-		fail(w, http.StatusUnauthorized, "Token 错误")
-		return
-	}
-	setAuthCookie(w, body.Token)
-	ok(w, map[string]any{"authenticated": true})
-}
-
-func (a *App) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w, "POST")
-		return
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     "sub2socks5_token",
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
-	})
-	ok(w, map[string]any{"authenticated": false})
-}
-
-// ===== Phase A: PATCH /api/config / /api/services CRUD / runtime state / diagnostics =====
 
 func (a *App) handleConfigPatch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPatch && r.Method != http.MethodPost {
@@ -2905,18 +2928,65 @@ func (a *App) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		allowedHosts := []string{"localhost", "127.0.0.1", "[::1]"}
+		if envHost := strings.TrimSpace(os.Getenv("SUB2SOCKS5_HOST")); envHost != "" && envHost != "0.0.0.0" {
+			allowedHosts = append(allowedHosts, envHost)
+		}
+		hostValid := false
+		for _, h := range allowedHosts {
+			if strings.HasPrefix(host, h+":") || host == h {
+				hostValid = true
+				break
+			}
+		}
+		if !hostValid {
+			http.Error(w, "Invalid Host header", http.StatusBadRequest)
+			return
+		}
+
 		w.Header().Set("x-content-type-options", "nosniff")
 		w.Header().Set("x-frame-options", "DENY")
 		w.Header().Set("referrer-policy", "no-referrer")
 		w.Header().Set("cross-origin-resource-policy", "same-origin")
 		w.Header().Set("cache-control", "no-store")
-		w.Header().Set("access-control-allow-origin", "*")
-		w.Header().Set("access-control-allow-methods", "GET, POST, HEAD, OPTIONS")
-		w.Header().Set("access-control-allow-headers", "content-type")
+
+		origin := r.Header.Get("Origin")
+		authEnabled := strings.TrimSpace(os.Getenv("SUB2SOCKS5_AUTH_TOKEN")) != ""
+		if authEnabled && origin != "" {
+			allowedOrigins := []string{"http://localhost", "http://127.0.0.1", "https://localhost", "https://127.0.0.1"}
+			originAllowed := false
+			for _, allowed := range allowedOrigins {
+				if strings.HasPrefix(origin, allowed) {
+					originAllowed = true
+					break
+				}
+			}
+			if originAllowed {
+				w.Header().Set("access-control-allow-origin", origin)
+				w.Header().Set("vary", "Origin")
+			}
+		} else if !authEnabled {
+			w.Header().Set("access-control-allow-origin", "*")
+		}
+
+		w.Header().Set("access-control-allow-methods", "GET, POST, PATCH, PUT, DELETE, HEAD, OPTIONS")
+		w.Header().Set("access-control-allow-headers", "content-type, authorization")
+		w.Header().Set("access-control-allow-credentials", "true")
+
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+
+		if r.Method == http.MethodPost || r.Method == http.MethodPatch || r.Method == http.MethodPut || r.Method == http.MethodDelete {
+			fetchSite := r.Header.Get("Sec-Fetch-Site")
+			if fetchSite != "" && fetchSite != "same-origin" && fetchSite != "none" {
+				http.Error(w, "CSRF check failed", http.StatusForbidden)
+				return
+			}
+		}
+
 		next.ServeHTTP(w, r)
 	})
 }
@@ -2928,9 +2998,18 @@ func ok(w http.ResponseWriter, v any) {
 }
 
 func fail(w http.ResponseWriter, status int, msg string) {
+	sanitized := sanitizeErrorMessage(msg)
 	w.Header().Set("content-type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": msg, "status": status}})
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": sanitized, "status": status}})
+}
+
+func sanitizeErrorMessage(msg string) string {
+	msg = regexp.MustCompile(`[A-Za-z]:\\[^\s]+`).ReplaceAllString(msg, "[path]")
+	msg = regexp.MustCompile(`/[a-zA-Z0-9/_.-]+`).ReplaceAllString(msg, "[path]")
+	msg = regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`).ReplaceAllString(msg, "[ip]")
+	msg = regexp.MustCompile(`:[0-9]{2,5}\b`).ReplaceAllString(msg, ":[port]")
+	return msg
 }
 
 func methodNotAllowed(w http.ResponseWriter, allow string) {
@@ -2938,12 +3017,36 @@ func methodNotAllowed(w http.ResponseWriter, allow string) {
 	fail(w, 405, "Method Not Allowed")
 }
 
-func writeJSON(path string, v any) error {
+func writeJSON(p string, v any) error {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o644)
+	dir := filepath.Dir(p)
+	tmp, err := os.CreateTemp(dir, ".tmp-"+filepath.Base(p)+"-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o600); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return os.Rename(tmpName, p)
 }
 
 func readJSON(path string, v any) error {
