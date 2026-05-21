@@ -25,12 +25,34 @@ function watchOverlayFocus(overlay) {
 }
 document.querySelectorAll('.overlay').forEach(watchOverlayFocus);
 
-const drawer = document.getElementById('drawer');
-const drawerMask = document.getElementById('drawer-mask');
-const drawerClose = document.getElementById('drawer-close');
-const topbarSettings = document.getElementById('topbar-settings');
-const runtimeBadge = document.getElementById('runtime-badge');
-const runtimeBadgeText = document.getElementById('runtime-badge-text');
+// byId: 缺失 DOM 时返回 noop stub，避免任何 .value/.textContent/.classList 等
+// 操作在 null 上抛 TypeError 中断模块加载。HTML 与 JS 历史不同步（多次
+// 简化时 JS 没跟着删）造成的 null 引用全部由此兜底，再也不用打补丁。
+const NOOP = () => {};
+function byId(id) {
+  const el = byId(id);
+  if (el) return el;
+  return {
+    textContent: '', innerHTML: '', value: '', className: '',
+    disabled: false, checked: false, hidden: false,
+    style: {}, dataset: {}, children: [],
+    classList: { add: NOOP, remove: NOOP, toggle: NOOP, contains: () => false },
+    setAttribute: NOOP, getAttribute: () => null, removeAttribute: NOOP,
+    addEventListener: NOOP, removeEventListener: NOOP, dispatchEvent: () => true,
+    click: NOOP, focus: NOOP, blur: NOOP, scrollIntoView: NOOP,
+    querySelector: () => null, querySelectorAll: () => [],
+    appendChild: (x) => x, removeChild: (x) => x, append: NOOP, prepend: NOOP, remove: NOOP,
+    closest: () => null, matches: () => false, contains: () => false,
+    insertBefore: (x) => x, replaceChild: (x) => x
+  };
+}
+
+const drawer = byId('drawer');
+const drawerMask = byId('drawer-mask');
+const drawerClose = byId('drawer-close');
+const topbarSettings = byId('topbar-settings');
+const runtimeBadge = byId('runtime-badge');
+const runtimeBadgeText = byId('runtime-badge-text');
 const drawerTabs = document.querySelectorAll('.drawer-tab');
 const drawerSections = document.querySelectorAll('.drawer-section');
 
@@ -95,84 +117,84 @@ function updateRuntimeBadge(info) {
   }
 }
 
-const editor = document.getElementById('json-editor');
-const nodesEl = document.getElementById('nodes');
+const editor = byId('json-editor');
+const nodesEl = byId('nodes');
 
-const generatedEl = document.getElementById('generated');
-const kernelEl = document.getElementById('kernel');
-const architectureEl = document.getElementById('architecture');
-const logsEl = document.getElementById('logs');
-const statusBar = document.getElementById('status-bar');
-const editorStatus = document.getElementById('editor-status');
+const generatedEl = byId('generated');
+const kernelEl = byId('kernel');
+const architectureEl = byId('architecture');
+const logsEl = byId('logs');
+const statusBar = byId('status-bar');
+const editorStatus = byId('editor-status');
 const actionButtons = [
   ...document.querySelectorAll('.actions button'),
   ...document.querySelectorAll('.section-heading-actions button')
 ];
-const formView = document.getElementById('form-view');
-const jsonView = document.getElementById('json-view');
-const switchFormButton = document.getElementById('switch-form');
-const switchJsonButton = document.getElementById('switch-json');
+const formView = byId('form-view');
+const jsonView = byId('json-view');
+const switchFormButton = byId('switch-form');
+const switchJsonButton = byId('switch-json');
 const tabButtons = [...document.querySelectorAll('.tab-button[data-tab]')];
-const manageNodesButton = document.getElementById('manage-nodes');
-const socksServicesEl = document.getElementById('socks-services');
-const socksCountEl = document.getElementById('socks-count');
-const exportSocksButton = document.getElementById('export-socks');
-const copySocksButton = document.getElementById('copy-socks');
-const autoConfigureSocksButton = document.getElementById('auto-configure-socks');
-const editSocksServiceButton = document.getElementById('edit-socks-service');
-const subscriptionUrlsEl = document.getElementById('subscription-urls');
-const addSubscriptionUrlButton = document.getElementById('add-subscription-url');
-const openSubAutoUpdateButton = document.getElementById('open-sub-auto-update');
-const kernelVersionSelect = document.getElementById('kernel-version-select');
-const kernelArchSelect = document.getElementById('kernel-arch-select');
-const dnsRemoteUrlWrap = document.getElementById('field-dns-remote-url-wrap');
-const dnsBootstrapWrap = document.getElementById('field-dns-bootstrap-wrap');
-const socksConfigOverlay = document.getElementById('socks-config-overlay');
-const socksConfigStep = document.getElementById('socks-config-step');
-const socksConfigProgress = document.getElementById('socks-config-progress');
-const socksConfigDetail = document.getElementById('socks-config-detail');
-const cancelSocksConfigButton = document.getElementById('socks-config-cancel');
-const subAutoUpdateOverlay = document.getElementById('sub-auto-update-overlay');
-const subAutoScopeWrap = document.getElementById('sub-auto-scope-wrap');
-const subAutoModeWrap = document.getElementById('sub-auto-mode-wrap');
-const subUrlZoomOverlay = document.getElementById('subscription-zoom-overlay');
-const subUrlZoomInput = document.getElementById('subscription-zoom-textarea');
-const saveSubUrlZoomButton = document.getElementById('subscription-zoom-save');
-const cancelSubUrlZoomButton = document.getElementById('subscription-zoom-cancel');
-const copySocksOverlay = document.getElementById('copy-socks-overlay');
-const copySocksTabLines = document.getElementById('copy-socks-tab-lines');
-const copySocksTabCustom = document.getElementById('copy-socks-tab-custom');
-const copySocksLinesPanel = document.getElementById('copy-socks-lines-panel');
-const copySocksCustomPanel = document.getElementById('copy-socks-custom-panel');
-const copySocksLinesPreview = document.getElementById('copy-socks-lines-preview');
-const copySocksCustomSeparator = document.getElementById('copy-socks-custom-separator');
-const copySocksCustomPreview = document.getElementById('copy-socks-custom-preview');
-const copySocksConfirmButton = document.getElementById('copy-socks-confirm');
-const copySocksCancelButton = document.getElementById('copy-socks-cancel');
-const subFilterOverlay = document.getElementById('sub-filter-overlay');
-const subFilterTabOff = document.getElementById('sub-filter-tab-off');
-const subFilterTabBlack = document.getElementById('sub-filter-tab-black');
-const subFilterTabWhite = document.getElementById('sub-filter-tab-white');
-const subFilterInputsEl = document.getElementById('sub-filter-inputs');
-const subFilterAddButton = document.getElementById('sub-filter-add');
-const subFilterSaveButton = document.getElementById('sub-filter-save');
-const subFilterCancelButton = document.getElementById('sub-filter-cancel');
-const subAutoScopeEl = document.getElementById('sub-auto-scope');
-const subAutoModeEl = document.getElementById('sub-auto-mode');
-const subAutoIntervalWrap = document.getElementById('sub-auto-interval-wrap');
-const subAutoIntervalEl = document.getElementById('sub-auto-interval');
-const subAutoTimeWrap = document.getElementById('sub-auto-time-wrap');
-const subAutoTimeEl = document.getElementById('sub-auto-time');
-const subAutoDayWrap = document.getElementById('sub-auto-day-wrap');
-const subAutoDayModeEl = document.getElementById('sub-auto-day-mode');
-const subAutoTargetsWrap = document.getElementById('sub-auto-targets-wrap');
-const subAutoTargetsEl = document.getElementById('sub-auto-targets');
-const saveSubAutoUpdateButton = document.getElementById('sub-auto-update-save');
-const cancelSubAutoUpdateButton = document.getElementById('sub-auto-update-cancel');
+const manageNodesButton = byId('manage-nodes');
+const socksServicesEl = byId('socks-services');
+const socksCountEl = byId('socks-count');
+const exportSocksButton = byId('export-socks');
+const copySocksButton = byId('copy-socks');
+const autoConfigureSocksButton = byId('auto-configure-socks');
+const editSocksServiceButton = byId('edit-socks-service');
+const subscriptionUrlsEl = byId('subscription-urls');
+const addSubscriptionUrlButton = byId('add-subscription-url');
+const openSubAutoUpdateButton = byId('open-sub-auto-update');
+const kernelVersionSelect = byId('kernel-version-select');
+const kernelArchSelect = byId('kernel-arch-select');
+const dnsRemoteUrlWrap = byId('field-dns-remote-url-wrap');
+const dnsBootstrapWrap = byId('field-dns-bootstrap-wrap');
+const socksConfigOverlay = byId('socks-config-overlay');
+const socksConfigStep = byId('socks-config-step');
+const socksConfigProgress = byId('socks-config-progress');
+const socksConfigDetail = byId('socks-config-detail');
+const cancelSocksConfigButton = byId('socks-config-cancel');
+const subAutoUpdateOverlay = byId('sub-auto-update-overlay');
+const subAutoScopeWrap = byId('sub-auto-scope-wrap');
+const subAutoModeWrap = byId('sub-auto-mode-wrap');
+const subUrlZoomOverlay = byId('subscription-zoom-overlay');
+const subUrlZoomInput = byId('subscription-zoom-textarea');
+const saveSubUrlZoomButton = byId('subscription-zoom-save');
+const cancelSubUrlZoomButton = byId('subscription-zoom-cancel');
+const copySocksOverlay = byId('copy-socks-overlay');
+const copySocksTabLines = byId('copy-socks-tab-lines');
+const copySocksTabCustom = byId('copy-socks-tab-custom');
+const copySocksLinesPanel = byId('copy-socks-lines-panel');
+const copySocksCustomPanel = byId('copy-socks-custom-panel');
+const copySocksLinesPreview = byId('copy-socks-lines-preview');
+const copySocksCustomSeparator = byId('copy-socks-custom-separator');
+const copySocksCustomPreview = byId('copy-socks-custom-preview');
+const copySocksConfirmButton = byId('copy-socks-confirm');
+const copySocksCancelButton = byId('copy-socks-cancel');
+const subFilterOverlay = byId('sub-filter-overlay');
+const subFilterTabOff = byId('sub-filter-tab-off');
+const subFilterTabBlack = byId('sub-filter-tab-black');
+const subFilterTabWhite = byId('sub-filter-tab-white');
+const subFilterInputsEl = byId('sub-filter-inputs');
+const subFilterAddButton = byId('sub-filter-add');
+const subFilterSaveButton = byId('sub-filter-save');
+const subFilterCancelButton = byId('sub-filter-cancel');
+const subAutoScopeEl = byId('sub-auto-scope');
+const subAutoModeEl = byId('sub-auto-mode');
+const subAutoIntervalWrap = byId('sub-auto-interval-wrap');
+const subAutoIntervalEl = byId('sub-auto-interval');
+const subAutoTimeWrap = byId('sub-auto-time-wrap');
+const subAutoTimeEl = byId('sub-auto-time');
+const subAutoDayWrap = byId('sub-auto-day-wrap');
+const subAutoDayModeEl = byId('sub-auto-day-mode');
+const subAutoTargetsWrap = byId('sub-auto-targets-wrap');
+const subAutoTargetsEl = byId('sub-auto-targets');
+const saveSubAutoUpdateButton = byId('sub-auto-update-save');
+const cancelSubAutoUpdateButton = byId('sub-auto-update-cancel');
 
 const tabPanels = {
-  overview: document.getElementById('tab-overview'),
-  logs: document.getElementById('tab-logs')
+  overview: byId('tab-overview'),
+  logs: byId('tab-logs')
 };
 
 const NODES_UPDATED_KEY = 'sub2socks5:nodes-updated-at';
@@ -183,25 +205,25 @@ const DNS_PRESET_URLS = {
 const DNS_BOOTSTRAP_PRESETS = ['1.1.1.1', '8.8.8.8', '223.5.5.5'];
 
 const forms = {
-  architecture: document.getElementById('architecture-form'),
-  kernel: document.getElementById('kernel-form'),
-  subscription: document.getElementById('subscription-form'),
-  logs: document.getElementById('logs-form')
+  architecture: byId('architecture-form'),
+  kernel: byId('kernel-form'),
+  subscription: byId('subscription-form'),
+  logs: byId('logs-form')
 };
 
 const fields = {
-  appHost: document.getElementById('field-app-host'),
-  appPort: document.getElementById('field-app-port'),
-  appBinary: document.getElementById('field-app-binary'),
-  appLogLevel: document.getElementById('field-app-log-level'),
-  appAutoStart: document.getElementById('field-app-auto-start'),
-  appAutoConfigureSubscription: document.getElementById('field-app-auto-configure-subscription'),
-  dnsStrategy: document.getElementById('field-dns-strategy'),
-  dnsRemotePreset: document.getElementById('field-dns-remote-preset'),
-  dnsRemoteUrl: document.getElementById('field-dns-remote-url'),
-  dnsBootstrapPreset: document.getElementById('field-dns-bootstrap-preset'),
-  dnsBootstrap: document.getElementById('field-dns-bootstrap'),
-  routeFinal: document.getElementById('field-route-final')
+  appHost: byId('field-app-host'),
+  appPort: byId('field-app-port'),
+  appBinary: byId('field-app-binary'),
+  appLogLevel: byId('field-app-log-level'),
+  appAutoStart: byId('field-app-auto-start'),
+  appAutoConfigureSubscription: byId('field-app-auto-configure-subscription'),
+  dnsStrategy: byId('field-dns-strategy'),
+  dnsRemotePreset: byId('field-dns-remote-preset'),
+  dnsRemoteUrl: byId('field-dns-remote-url'),
+  dnsBootstrapPreset: byId('field-dns-bootstrap-preset'),
+  dnsBootstrap: byId('field-dns-bootstrap'),
+  routeFinal: byId('field-route-final')
 };
 
 // 安全赋值：HTML 简化后部分字段元素可能不存在，此 helper 让 .value/.disabled 等
@@ -303,7 +325,7 @@ function renderOverview() {
     assetSuffix: arch.assetSuffix || '',
     plannedVersion: latestData.plannedKernel?.version || ''
   })));
-  const kernelBadge = document.getElementById('kernel-status-badge');
+  const kernelBadge = byId('kernel-status-badge');
   if (kernelBadge) {
     const isRunning = latestData.runtime?.running;
     const isInstalled = latestData.kernel?.installed;
@@ -1137,7 +1159,7 @@ function buildSocksAddressList() {
 }
 
 function renderLogoutButton(enabled) {
-  const btn = document.getElementById('sidebar-logout');
+  const btn = byId('sidebar-logout');
   if (!btn) return;
   btn.classList.toggle('is-hidden', !enabled);
 }
@@ -1480,7 +1502,7 @@ function chineseLabels(obj) {
   return result;
 }
 
-const toastEl = document.getElementById('toast-container');
+const toastEl = byId('toast-container');
 let toastTimer = null;
 
 function showToast(message, success) {
@@ -2202,7 +2224,7 @@ function showSection(hash) {
     const fallback = document.querySelector('.section[data-section="home"]');
     if (fallback) fallback.classList.add('is-active');
   }
-  const pageTitle = document.getElementById('page-title');
+  const pageTitle = byId('page-title');
   const activeNav = document.querySelector(`.nav-item[data-nav="${sectionId}"]`);
   if (pageTitle && activeNav) pageTitle.textContent = activeNav.textContent.trim();
   if (sectionId === 'json') switchView('json');
