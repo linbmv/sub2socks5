@@ -122,6 +122,7 @@ func RunWithStaticFS(staticFS fs.FS) error {
 	mux.HandleFunc("/api/runtime/state", app.handleRuntimeState)
 	mux.HandleFunc("/api/diagnostics", app.handleDiagnostics)
 	mux.HandleFunc("/api/subscription/refresh", app.handleSubscriptionRefresh)
+	mux.HandleFunc("/api/subscription/preview", app.handleSubscriptionPreview)
 	mux.HandleFunc("/api/nodes", app.handleNodes)
 	mux.HandleFunc("/api/nodes/import", app.handleNodeImport)
 	mux.HandleFunc("/api/nodes/check", app.handleNodesCheck)
@@ -536,6 +537,155 @@ func (a *App) handleSubscriptionRefresh(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	ok(w, a.subState)
+}
+
+// handleSubscriptionPreview 解析订阅 URL 或粘贴文本，返回节点预览（不写入磁盘）。
+// 入参：{url?: string, raw?: string, userAgent?: string}
+// 出参：{nodes: [{tag,type,server,port,status,reason,raw}], stats:{valid,invalid,dup,total}, warnings: []string}
+// status: valid | dup | invalid
+func (a *App) handleSubscriptionPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, "POST")
+		return
+	}
+	var body map[string]any
+	if err := decodeJSON(r.Body, &body); err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	urlStr := strings.TrimSpace(mustStr(body["url"]))
+	raw := mustStr(body["raw"])
+	if urlStr == "" && strings.TrimSpace(raw) == "" {
+		fail(w, http.StatusBadRequest, "url 或 raw 至少提供一项")
+		return
+	}
+
+	warnings := []string{}
+	parsedNodes := []map[string]any{}
+
+	if urlStr != "" {
+		if err := validateSubscriptionURL(urlStr); err != nil {
+			fail(w, http.StatusBadRequest, "订阅地址不安全: "+err.Error())
+			return
+		}
+		userAgent := strings.TrimSpace(mustStr(body["userAgent"]))
+		if userAgent == "" {
+			a.mu.RLock()
+			userAgent = getString(getMap(a.cfg, "subscription"), "userAgent", "sub2socks5-go/0.1.0")
+			a.mu.RUnlock()
+		}
+		client := &http.Client{
+			Timeout: 20 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 3 {
+					return fmt.Errorf("too many redirects")
+				}
+				if err := validateSubscriptionURL(req.URL.String()); err != nil {
+					return fmt.Errorf("redirect to unsafe URL: %w", err)
+				}
+				return nil
+			},
+		}
+		req, _ := http.NewRequest(http.MethodGet, urlStr, nil)
+		req.Header.Set("user-agent", userAgent)
+		resp, err := client.Do(req)
+		if err != nil {
+			fail(w, http.StatusBadGateway, "拉取订阅失败: "+err.Error())
+			return
+		}
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+		_ = resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			fail(w, http.StatusBadGateway, fmt.Sprintf("拉取订阅失败: HTTP %d", resp.StatusCode))
+			return
+		}
+		pr := parseSubscription(string(respBody))
+		parsedNodes = append(parsedNodes, pr.nodes...)
+		warnings = append(warnings, pr.warnings...)
+	}
+
+	if strings.TrimSpace(raw) != "" {
+		pr := parseSubscription(raw)
+		parsedNodes = append(parsedNodes, pr.nodes...)
+		warnings = append(warnings, pr.warnings...)
+	}
+
+	// 收集已有节点的指纹用于重复检测（订阅节点 + 手动节点）。
+	existing := map[string]bool{}
+	a.mu.RLock()
+	for _, n := range getSlice(a.subState, "nodes") {
+		if m, ok := n.(map[string]any); ok {
+			existing[fingerprintNode(m)] = true
+		}
+	}
+	if nr := getMap(a.cfg, "nodeRegistry"); nr != nil {
+		for _, n := range getSlice(nr, "manualNodes") {
+			if m, ok := n.(map[string]any); ok {
+				existing[fingerprintNode(m)] = true
+			}
+		}
+	}
+	a.mu.RUnlock()
+
+	// 同批次内部去重也要标记。
+	seenInBatch := map[string]bool{}
+	preview := []map[string]any{}
+	stats := map[string]int{"valid": 0, "invalid": 0, "dup": 0, "total": 0}
+
+	for _, n := range parsedNodes {
+		stats["total"]++
+		fp := fingerprintNode(n)
+		entry := map[string]any{
+			"tag":    mustStr(n["tag"]),
+			"type":   mustStr(n["type"]),
+			"server": mustStr(n["server"]),
+			"port":   n["server_port"],
+		}
+		// 批量导入向导需要的协议级元数据，便于用户在确认前核对节点细节。
+		// 仅透传非空字段以避免 JSON 体积膨胀。
+		if v, ok := n["transport"]; ok && v != nil {
+			entry["transport"] = v
+		}
+		if v, ok := n["tls"]; ok && v != nil {
+			entry["tls"] = v
+		}
+		if v, ok := n["network"]; ok && v != nil {
+			entry["network"] = v
+		}
+		if v := strings.TrimSpace(mustStr(n["method"])); v != "" {
+			entry["method"] = v
+		}
+		// 校验关键字段——空 server / port 视为 invalid。
+		if mustStr(n["type"]) == "" || mustStr(n["server"]) == "" {
+			entry["status"] = "invalid"
+			entry["reason"] = "节点缺少 type 或 server"
+			stats["invalid"]++
+		} else if existing[fp] || seenInBatch[fp] {
+			entry["status"] = "dup"
+			entry["reason"] = "与现有节点重复"
+			stats["dup"]++
+		} else {
+			entry["status"] = "valid"
+			seenInBatch[fp] = true
+			stats["valid"]++
+		}
+		preview = append(preview, entry)
+	}
+
+	ok(w, map[string]any{
+		"nodes":    preview,
+		"stats":    stats,
+		"warnings": warnings,
+	})
+}
+
+// fingerprintNode 计算节点的归一化指纹（type::tag::server::port），用于去重检测。
+func fingerprintNode(n map[string]any) string {
+	return fmt.Sprintf("%s::%s::%s::%v",
+		strings.ToLower(mustStr(n["type"])),
+		mustStr(n["tag"]),
+		mustStr(n["server"]),
+		n["server_port"])
 }
 
 func (a *App) handleNodes(w http.ResponseWriter, r *http.Request) {
@@ -2490,15 +2640,26 @@ func buildSingBoxConfig(cfg, sub map[string]any) map[string]any {
 		if inboundTag == "" {
 			continue
 		}
+		// 端口协议：socks（默认，向后兼容）或 http。
+		// 同一份用户列表既适用 SOCKS5 鉴权也适用 HTTP Basic 鉴权（sing-box 协议层差异透明）。
+		protocol := strings.ToLower(strings.TrimSpace(mustStr(pm["protocol"])))
+		switch protocol {
+		case "http":
+			// keep
+		case "", "socks", "socks5":
+			protocol = "socks"
+		default:
+			protocol = "socks"
+		}
 		inbound := map[string]any{
-			"type":        "socks",
+			"type":        protocol,
 			"tag":         inboundTag,
 			"listen":      mustStr(pm["listen"]),
 			"listen_port": int(toFloat(pm["port"])),
 		}
-		// SOCKS5 用户名密码鉴权（可选）。
+		// 端口鉴权（可选）。
 		// users 来自 ports[].users，格式: [{"username":"u","password":"p"}, ...]
-		// 配置后该端口仅接受提供匹配凭据的客户端连接。
+		// 同一字段既适用于 SOCKS5 用户名密码也适用于 HTTP Basic 鉴权。
 		users := []any{}
 		for _, u := range getSlice(pm, "users") {
 			um, ok := u.(map[string]any)
@@ -2754,13 +2915,14 @@ func (a *App) handleServicesList(w http.ResponseWriter, r *http.Request) {
 			tag = fmt.Sprintf("socks-%d", port)
 		}
 		svc := map[string]any{
-			"tag":     tag,
-			"listen":  listen,
-			"port":    port,
-			"target":  target,
-			"sniff":   true,
-			"enabled": true,
-			"users":   normalizeServiceUsers(getSlice(body, "users")),
+			"tag":      tag,
+			"listen":   listen,
+			"port":     port,
+			"target":   target,
+			"protocol": normalizeServiceProtocol(mustStr(body["protocol"])),
+			"sniff":    true,
+			"enabled":  true,
+			"users":    normalizeServiceUsers(getSlice(body, "users")),
 		}
 		ports = append(ports, svc)
 		a.cfg["ports"] = ports
@@ -2846,6 +3008,17 @@ func serviceWithID(svc map[string]any) map[string]any {
 	return out
 }
 
+// normalizeServiceProtocol 将端口协议字段归一化为 sing-box inbound type。
+// 接受 socks/socks5（→ socks，向后兼容默认）或 http；其他值回落 socks。
+func normalizeServiceProtocol(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "http":
+		return "http"
+	default:
+		return "socks"
+	}
+}
+
 // normalizeServiceUsers 校验并规范化 SOCKS5 inbound 用户列表。
 // 入参形如 [{"username":"u","password":"p"}, ...]，丢弃任一字段为空的项。
 // 始终返回非 nil slice（[]any{}），便于持久化到 JSON。
@@ -2892,15 +3065,69 @@ func (a *App) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	issues := []map[string]any{}
+	bannerHints := []map[string]any{}
 	seenTag := map[string]bool{}
 	seenListenPort := map[string]bool{}
 	inDocker := runningInContainer()
+	authEnabled := strings.TrimSpace(os.Getenv("SUB2SOCKS5_PASSWORD")) != ""
 	availableTags := map[string]bool{}
 	for _, ob := range collectOutbounds(a.cfg, a.subState) {
 		if obm, ok := ob.(map[string]any); ok {
 			availableTags[mustStr(obm["tag"])] = true
 		}
 	}
+
+	// 横幅级 1：公网/局域网部署但鉴权未启用。
+	host := getString(getMap(a.cfg, "app"), "host", "0.0.0.0")
+	if env := strings.TrimSpace(os.Getenv("SUB2SOCKS5_HOST")); env != "" {
+		host = env
+	}
+	if !authEnabled && (inDocker || host == "0.0.0.0" || host == "::") {
+		bannerHints = append(bannerHints, map[string]any{
+			"code":     "auth_disabled_on_public_bind",
+			"severity": "danger",
+			"message":  "Web UI 监听非本地地址但未启用鉴权，建议立即设置 SUB2SOCKS5_PASSWORD",
+			"hint":     "设置环境变量 SUB2SOCKS5_USERNAME / SUB2SOCKS5_PASSWORD 后重启容器；或将 WEBUI_BIND 改回 127.0.0.1",
+		})
+	}
+
+	// 横幅级 2：HTTP inbound 暴露公网但凭据为空。
+	httpInboundsExposed := []string{}
+	for _, p := range getSlice(a.cfg, "ports") {
+		pm, _ := p.(map[string]any)
+		if pm == nil {
+			continue
+		}
+		protocol := strings.ToLower(strings.TrimSpace(mustStr(pm["protocol"])))
+		if protocol != "http" {
+			continue
+		}
+		listen := mustStr(pm["listen"])
+		users := getSlice(pm, "users")
+		hasCreds := false
+		for _, u := range users {
+			um, ok := u.(map[string]any)
+			if !ok {
+				continue
+			}
+			if strings.TrimSpace(mustStr(um["username"])) != "" && strings.TrimSpace(mustStr(um["password"])) != "" {
+				hasCreds = true
+				break
+			}
+		}
+		if !hasCreds && (listen == "0.0.0.0" || listen == "::" || inDocker) {
+			httpInboundsExposed = append(httpInboundsExposed, mustStr(pm["tag"]))
+		}
+	}
+	if len(httpInboundsExposed) > 0 {
+		bannerHints = append(bannerHints, map[string]any{
+			"code":     "http_inbound_no_credentials",
+			"severity": "danger",
+			"message":  "HTTP 代理端口未设置用户名密码：" + strings.Join(httpInboundsExposed, ", "),
+			"hint":     "在「编辑服务」中为 HTTP 端口添加 users 凭据，否则任何外部用户都可以滥用代理",
+		})
+	}
+
 	for i, p := range getSlice(a.cfg, "ports") {
 		pm, _ := p.(map[string]any)
 		if pm == nil {
@@ -2945,10 +3172,39 @@ func (a *App) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+	// 横幅级 3：存在端口超出 compose 发布范围。
+	if inDocker {
+		outOfRange := []string{}
+		for _, p := range getSlice(a.cfg, "ports") {
+			pm, _ := p.(map[string]any)
+			if pm == nil {
+				continue
+			}
+			port := getInt(pm, "port", 0)
+			if port < 18081 || port > 18100 {
+				outOfRange = append(outOfRange, fmt.Sprintf("%s:%d", mustStr(pm["tag"]), port))
+			}
+		}
+		if len(outOfRange) > 0 {
+			bannerHints = append(bannerHints, map[string]any{
+				"code":     "port_outside_compose_range",
+				"severity": "warning",
+				"message":  "以下端口在容器内监听但 compose 未发布：" + strings.Join(outOfRange, ", "),
+				"hint":     "编辑 docker-compose.yml ports 字段，扩展 18081-18100 区间或将端口改回该范围内",
+			})
+		}
+	}
+
 	if !getBool(a.kernelStatus(), "installed", false) {
 		issues = append(issues, map[string]any{
 			"code": "kernel_missing", "severity": "error",
 			"path": "/kernel", "message": "sing-box 内核未安装", "autoFix": "downloadKernel",
+		})
+		bannerHints = append(bannerHints, map[string]any{
+			"code":     "kernel_missing",
+			"severity": "danger",
+			"message":  "sing-box 内核未安装，所有代理端口都无法工作",
+			"hint":     "进入「设置 → 内核管理」点击「拉取内核」，或挂载 ./bin 目录到容器",
 		})
 	}
 	running := a.proc != nil && a.proc.Process != nil
@@ -2957,8 +3213,14 @@ func (a *App) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 			"code": "restart_needed", "severity": "warning",
 			"path": "/", "message": "运行配置已陈旧，重启 sing-box 后生效", "autoFix": "restartRuntime",
 		})
+		bannerHints = append(bannerHints, map[string]any{
+			"code":     "restart_needed",
+			"severity": "info",
+			"message":  "配置已更新但 sing-box 仍在运行旧版，需要重启使变更生效",
+			"hint":     "点击顶栏运行徽章触发重启，或调用 POST /api/runtime/start",
+		})
 	}
-	ok(w, map[string]any{"issues": issues, "inDocker": inDocker})
+	ok(w, map[string]any{"issues": issues, "bannerHints": bannerHints, "inDocker": inDocker})
 }
 
 func withCORS(next http.Handler) http.Handler {
