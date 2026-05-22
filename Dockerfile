@@ -68,5 +68,5 @@ LABEL org.opencontainers.image.title="sub2socks5" \
 
 # 容器以 root 启动 entrypoint：先 chown 挂载卷为 sub2socks5:sub2socks5，
 # 再用 setpriv 降权到 UID 10001 运行主程序。避免用户忘记 chown 导致 Permission denied。
-EXPOSE 18080 18081-18100
+EXPOSE 60080 60081-60100
 ENTRYPOINT ["/entrypoint.sh"]

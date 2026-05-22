@@ -148,7 +148,7 @@ func RunWithStaticFS(staticFS fs.FS) error {
 	if env := strings.TrimSpace(os.Getenv("SUB2SOCKS5_HOST")); env != "" {
 		host = env
 	}
-	port := getInt(getMap(app.cfg, "app"), "port", 18080)
+	port := getInt(getMap(app.cfg, "app"), "port", 60080)
 	if env := strings.TrimSpace(os.Getenv("SUB2SOCKS5_PORT")); env != "" {
 		n, err := strconv.Atoi(env)
 		if err != nil || n < 1 || n > 65535 {
@@ -2810,13 +2810,13 @@ func collectOutbounds(cfg, sub map[string]any) []any {
 func defaultConfig() map[string]any {
 	exe := filepath.ToSlash(filepath.Join("internal", "bin", map[bool]string{true: "sing-box.exe", false: "sing-box"}[runtime.GOOS == "windows"]))
 	return map[string]any{
-		"app":          map[string]any{"host": "127.0.0.1", "port": 18080, "singBoxBinary": exe, "autoStart": false, "autoConfigureOnSubscription": false, "logLevel": "info"},
+		"app":          map[string]any{"host": "127.0.0.1", "port": 60080, "singBoxBinary": exe, "autoStart": false, "autoConfigureOnSubscription": false, "logLevel": "info"},
 		"subscription": map[string]any{"url": "", "urls": []any{}, "format": "raw", "userAgent": "sub2socks5/0.1.0", "refreshIntervalMinutes": 60, "headers": map[string]any{}},
 		"dns":          map[string]any{"strategy": "prefer_ipv4", "remotePreset": "cloudflare", "remoteUrl": "https://cloudflare-dns.com/dns-query", "bootstrapServer": "1.1.1.1"},
 		"routing":      map[string]any{"routeFinal": "proxy", "autoDetectInterface": true, "ruleSetUrls": []any{}, "rules": []any{map[string]any{"action": "sniff"}}},
 		"nodeRegistry": map[string]any{"manualNodes": []any{}, "groups": []any{}, "chains": []any{}, "disabledSubscriptionTags": []any{}},
 		"runtimeState": map[string]any{"fallbackGroups": map[string]any{}},
-		"ports":        []any{map[string]any{"tag": "default-socks", "listen": "127.0.0.1", "port": 18081, "target": "proxy", "sniff": true}},
+		"ports":        []any{map[string]any{"tag": "default-socks", "listen": "127.0.0.1", "port": 60081, "target": "proxy", "sniff": true}},
 	}
 }
 
@@ -2900,10 +2900,10 @@ func (a *App) handleServicesList(w http.ResponseWriter, r *http.Request) {
 		}
 		port := int(toFloat(body["port"]))
 		if port <= 0 {
-			port = a.nextAvailableSocksPort(18081, 18100)
+			port = a.nextAvailableSocksPort(60081, 60100)
 		}
 		if port == 0 {
-			fail(w, http.StatusBadRequest, "无可用端口（18081-18100 已用尽）")
+			fail(w, http.StatusBadRequest, "无可用端口（60081-60100 已用尽）")
 			return
 		}
 		target := strings.TrimSpace(mustStr(body["target"]))
@@ -3165,10 +3165,10 @@ func (a *App) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 				"path": path + "/listen", "message": "Docker 容器内监听 127.0.0.1，外部不可达", "autoFix": "setListen:0.0.0.0",
 			})
 		}
-		if inDocker && (port < 18081 || port > 18100) {
+		if inDocker && (port < 60081 || port > 60100) {
 			issues = append(issues, map[string]any{
 				"code": "port_outside_published_range", "severity": "warning",
-				"path": path + "/port", "message": fmt.Sprintf("端口 %d 不在 compose 默认发布范围 18081-18100", port),
+				"path": path + "/port", "message": fmt.Sprintf("端口 %d 不在 compose 默认发布范围 60081-60100", port),
 			})
 		}
 	}
@@ -3181,7 +3181,7 @@ func (a *App) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			port := getInt(pm, "port", 0)
-			if port < 18081 || port > 18100 {
+			if port < 60081 || port > 60100 {
 				outOfRange = append(outOfRange, fmt.Sprintf("%s:%d", mustStr(pm["tag"]), port))
 			}
 		}
@@ -3190,7 +3190,7 @@ func (a *App) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 				"code":     "port_outside_compose_range",
 				"severity": "warning",
 				"message":  "以下端口在容器内监听但 compose 未发布：" + strings.Join(outOfRange, ", "),
-				"hint":     "编辑 docker-compose.yml ports 字段，扩展 18081-18100 区间或将端口改回该范围内",
+				"hint":     "编辑 docker-compose.yml ports 字段，扩展 60081-60100 区间或将端口改回该范围内",
 			})
 		}
 	}

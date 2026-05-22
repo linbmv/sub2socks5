@@ -16,7 +16,7 @@
 set -u
 set -o pipefail
 
-WEBUI_URL="${WEBUI_URL:-http://127.0.0.1:18080}"
+WEBUI_URL="${WEBUI_URL:-http://127.0.0.1:60080}"
 COMPOSE_BIN="${COMPOSE_BIN:-docker compose}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-60}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
@@ -85,7 +85,7 @@ green "✓ /api/subscription/preview 返回 stats/nodes"
 log "校验 POST 端口创建（F1 HTTP inbound 协议字段）"
 http_port_test=$(curl -fsS -X POST -H 'content-type: application/json' \
     -H 'sec-fetch-site: same-origin' \
-    -d '{"tag":"smoke-http","listen":"127.0.0.1","port":18099,"target":"direct","protocol":"http"}' \
+    -d '{"tag":"smoke-http","listen":"127.0.0.1","port":60099,"target":"direct","protocol":"http"}' \
     "$WEBUI_URL/api/services" 2>/dev/null || echo "")
 if echo "$http_port_test" | grep -q '"service"'; then
     green "✓ HTTP 协议端口创建成功"

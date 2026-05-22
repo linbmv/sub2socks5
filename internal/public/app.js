@@ -797,7 +797,7 @@ function fillForm(config) {
   formSubscriptionUrls = urls.map((url) => ({ url }));
   expandedSubscriptionInputs.clear();
   fields.appHost.value = config.app?.host || '0.0.0.0';
-  fields.appPort.value = config.app?.port || 18080;
+  fields.appPort.value = config.app?.port || 60080;
   fields.appBinary.value = config.app?.singBoxBinary || '';
   fields.appLogLevel.value = config.app?.logLevel || 'info';
   fields.appAutoStart.value = config.app?.autoStart ? 'true' : 'false';
@@ -869,7 +869,7 @@ async function assignMissingSuggestedPorts() {
   for (let index = 0; index < formPorts.length; index += 1) {
     if (Number(formPorts[index].port) > 0) continue;
     const start = index === 0
-      ? Number(fields.appPort.value || 18080) + 1
+      ? Number(fields.appPort.value || 60080) + 1
       : Number(formPorts[index - 1].port || 0) + 1;
     const nextPort = await resolveNextPort(host, start, [...used]);
     formPorts[index].port = nextPort;
@@ -953,7 +953,7 @@ async function autoConfigureSocksServicesFromOutbounds() {
   updateSocksConfigOverlay('生成服务', passedOutbounds.length, outbounds.length, '正在为测速通过节点分配端口...');
   const host = '127.0.0.1';
   const used = new Set();
-  const appPort = Number(fields.appPort.value || latestData.config?.app?.port || 18080);
+  const appPort = Number(fields.appPort.value || latestData.config?.app?.port || 60080);
   let nextStart = appPort + 1;
   const generated = [];
 
@@ -2086,7 +2086,7 @@ document.addEventListener('click', (event) => {
       .filter((p) => Number.isInteger(p) && p > 0);
     const start = Number(formPorts[index]?.port || 0) > 0
       ? Number(formPorts[index].port) + 1
-      : Number(fields.appPort.value || 18080) + 1;
+      : Number(fields.appPort.value || 60080) + 1;
     resolveNextPort(host, start, used).then((port) => {
       formPorts[index].port = port;
       renderSocksServices();
@@ -2160,7 +2160,7 @@ fields.dnsBootstrapPreset.addEventListener('change', () => {
 
 fields.appPort?.addEventListener('change', async () => {
   if (!formPorts.length) return;
-  const currentAppPort = Number(fields.appPort.value || 18080);
+  const currentAppPort = Number(fields.appPort.value || 60080);
   const firstPort = Number(formPorts[0]?.port || 0);
   if (!firstPort || firstPort <= currentAppPort) {
     formPorts[0].port = '';

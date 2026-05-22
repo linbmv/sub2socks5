@@ -1,49 +1,80 @@
-# sub2socks5 部署 - 单文件支持本机 / LAN 共享两种模式
+# sub2socks5 - 公网 VPS host 网络部署（安全加固版）
 #
-# 用法：复制 .env.example 为 .env，按场景填值后执行
-#   docker compose up -d --build
+# 前置：
+#   1. cp .env.example .env，至少设置 SUB2SOCKS5_PASSWORD
+#   2. VPS 防火墙放行：60080/tcp（Web UI）+ 60081-60100/tcp（SOCKS5/HTTP 代理）
+# 启动：docker compose up -d --build
 #
-# 部署模式（由 .env 控制）：
-#
-#   ┌────────────────┬──────────────────────────────┬───────────────────────────┐
-#   │ 模式           │ .env 关键变量                 │ 访问方式                   │
-#   ├────────────────┼──────────────────────────────┼───────────────────────────┤
-#   │ 本机           │ 全部默认                      │ http://127.0.0.1:18080     │
-#   │ LAN / 公网直连 │ WEBUI_BIND=0.0.0.0           │ http://<lan-ip>:18080      │
-#   │                │ + USERNAME + PASSWORD        │                            │
-#   └────────────────┴──────────────────────────────┴───────────────────────────┘
-#
-# 详细参考 README "Docker 部署" 章节。
+# 安全加固说明：
+#   - network_mode: host       直接共享宿主机网络栈，零端口映射开销，仅 Linux 可用
+#   - read_only: true          根文件系统只读，攻击者写不了 /usr 等系统目录
+#   - tmpfs                    /tmp 用 tmpfs 内存盘满足临时写入需求
+#   - cap_drop ALL             丢弃所有 Linux capability，最小权限运行
+#   - no-new-privileges        阻止 setuid/setgid 提权
+#   - mem/cpu limits           防 sing-box 跑飞耗光 VPS 资源
+#   - logging                  限制 json-file 大小防撑爆磁盘
 
 services:
   sub2socks5:
-    # 默认本地构建。如已发布到 GHCR，可改用：
-    #   image: ghcr.io/sglinhome/sub2socks5:latest
-    build:
-      context: .
+    build: { context: . }
     image: sub2socks5:local
     container_name: sub2socks5
     restart: unless-stopped
-    # init 用于回收 sing-box 子进程，避免僵尸进程。
     init: true
+
+    # host 模式：容器监听什么端口宿主机就直接开什么端口。
+    # 仅 Linux 支持；Windows/macOS Docker Desktop 需回退到 bridge + ports 映射。
+    network_mode: host
+
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      # Docker bridge 必须监听 0.0.0.0 否则端口映射不通。
-      SUB2SOCKS5_HOST: "0.0.0.0"
-      # Web UI 用户名 / 密码鉴权（公网部署强烈建议设置）。
-      # PASSWORD 留空 → 鉴权关闭；填了 → 启用。USERNAME 留空默认 admin。
-      # 生成强密码：openssl rand -base64 24
-      SUB2SOCKS5_USERNAME: ${SUB2SOCKS5_USERNAME:-}
-      SUB2SOCKS5_PASSWORD: ${SUB2SOCKS5_PASSWORD:-}
-    ports:
-      # Web UI 端口。
-      # WEBUI_BIND=127.0.0.1（默认）→ 仅本机访问。
-      # WEBUI_BIND=0.0.0.0          → LAN/公网直连（务必先设 USERNAME+PASSWORD）。
-      - "${WEBUI_BIND:-127.0.0.1}:18080:18080"
-      # SOCKS5 端口范围。开放外部使用前请在 Web UI 给每个端口配 username/password 用户。
-      - "${SOCKS5_BIND:-0.0.0.0}:18081-18100:18081-18100"
+      # host 模式下 Web UI 监听宿主机网卡：
+      #   0.0.0.0 = 全网卡（公网可达，必须配密码）
+      #   127.0.0.1 = 仅本机（推荐，配 ssh -L 60080:127.0.0.1:60080 隧道访问）
+      SUB2SOCKS5_HOST: ${SUB2SOCKS5_HOST:-127.0.0.1}
+      SUB2SOCKS5_PORT: ${SUB2SOCKS5_PORT:-60080}
+      # 必填，留空则启动报错；生成：openssl rand -base64 24
+      SUB2SOCKS5_USERNAME: ${SUB2SOCKS5_USERNAME:-admin}
+      SUB2SOCKS5_PASSWORD: ${SUB2SOCKS5_PASSWORD:?需在 .env 中设置 SUB2SOCKS5_PASSWORD}
+
     volumes:
       - ./data:/app/internal/data
       - ./runtime:/app/internal/runtime
-      # 镜像已内置 sing-box，entrypoint 会在 bin 目录为空时 seed 默认版本。
       - ./bin:/app/internal/bin
+
+    # ============ 安全加固 ============
+    # 根文件系统只读；data/runtime/bin 通过 volumes 单独挂载为可写。
+    read_only: true
+    # 进程临时文件用内存盘，重启即净。
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    # 阻止子进程通过 setuid 提权（sing-box 不需要 root）。
+    security_opt:
+      - no-new-privileges:true
+    # 用户态 SOCKS5/HTTP 代理无需任何 Linux capability。
+    # 如果你绑定 < 1024 端口，再加 cap_add: [NET_BIND_SERVICE]。
+    cap_drop:
+      - ALL
+
+    # ============ 资源限制 ============
+    # mem_limit / cpus 是 compose v2 standalone 兼容字段（v3 deploy.resources 仅 swarm 生效）。
+    mem_limit: 512m
+    mem_reservation: 128m
+    cpus: 1.0
+    pids_limit: 256
+
+    # ============ 健康检查 ============
+    healthcheck:
+      # 用 wget 探测（busybox 自带，镜像层无需额外装 curl）
+      test: ["CMD-SHELL", "wget -qO- --timeout=3 http://127.0.0.1:${SUB2SOCKS5_PORT:-60080}/api/auth/status >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+    # ============ 日志限制 ============
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
